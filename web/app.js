@@ -189,6 +189,7 @@ async function init() {
     state.rootId = sel.value;
     state.rel = '';
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
+    saveState({ root: state.rootId }).catch(() => {});
     list().catch(showError);
   });
 
@@ -206,7 +207,8 @@ async function init() {
   window.addEventListener('keydown', (e) => onKey(e));
 
   if (cfg.roots.length) {
-    state.rootId = cfg.roots[0].id;
+    const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
+    state.rootId = hasRoot(saved.root) ? saved.root : cfg.roots[0].id;
     sel.value = state.rootId;
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
     await list();
