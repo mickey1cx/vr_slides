@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VR Стерео-галерея · Quest 3</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>VR Стерео-галерея <small>Quest 3 · SBS</small></h1>
+    <div class="bar">
+      <label>Каталог <select id="rootSelect"></select></label>
+      <button id="upBtn" title="На уровень выше">↑ Назад</button>
+      <span id="crumb" class="crumb"></span>
+      <span class="spacer"></span>
+      <span id="url" class="url"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="browser">
+      <div id="error" class="error" hidden></div>
+      <div id="grid" class="grid"></div>
+    </section>
+
+    <aside class="viewer">
+      <h2>Выбранное</h2>
+      <div id="preview" class="preview">Выберите изображение</div>
+      <div id="info" class="info"></div>
+      <button id="vrBtn" class="primary" disabled>Войти в VR</button>
+      <div class="hint">
+        <b>На Quest 3:</b> откройте <span id="questUrl" class="mono"></span>
+        в браузере и примите предупреждение о сертификате.<br>
+        <b>В VR:</b> триггер контроллера — следующее фото,
+        кнопка сжатия (grip) — предыдущее.
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
