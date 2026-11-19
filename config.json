@@ -10,6 +10,15 @@
   "statefile": "state.json",
   "qr": true,
   "qrfile": "cert/connect.png",
+  "controls": {
+    "panInvertX": true,
+    "panInvertY": true,
+    "shiftInvert": false,
+    "panStep": 0.08,
+    "shiftStep": 0.005,
+    "panBase": 0.35,
+    "panGain": 1.0
+  },
   "delete_to_trash": true,
   "roots": [
     {

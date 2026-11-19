@@ -72,6 +72,24 @@ TRASH_MODE = "send2trash" if _send2trash else ("windows" if sys.platform == "win
 # Конфиг и утилиты
 # ---------------------------------------------------------------------------
 
+def as_bool(value, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def as_num(value, default: float, low: float, high: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
 def load_config(path: Path) -> dict:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     cfg.setdefault("host", "0.0.0.0")
@@ -87,6 +105,18 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("qrfile", "cert/connect.png")
     cfg.setdefault("delete_to_trash", True)
     cfg.setdefault("roots", [])
+    cfg.setdefault("controls", {})
+    controls = cfg["controls"]
+    if not isinstance(controls, dict):
+        controls = {}
+        cfg["controls"] = controls
+    controls["panInvertX"] = as_bool(controls.get("panInvertX"), True)
+    controls["panInvertY"] = as_bool(controls.get("panInvertY"), True)
+    controls["shiftInvert"] = as_bool(controls.get("shiftInvert"), False)
+    controls["panStep"] = as_num(controls.get("panStep"), 0.08, 0.01, 0.5)
+    controls["shiftStep"] = as_num(controls.get("shiftStep"), 0.005, 0.0005, 0.05)
+    controls["panBase"] = as_num(controls.get("panBase"), 0.35, 0.0, 2.0)
+    controls["panGain"] = as_num(controls.get("panGain"), 1.0, 0.0, 4.0)
     return cfg
 
 
@@ -292,6 +322,7 @@ def config_payload() -> dict:
         "port": CONFIG["port"],
         "secure": True,
         "qr": QR_PNG is not None,
+        "controls": CONFIG["controls"],
         "language": CONFIG["language"],
         "maxTextureSize": CONFIG["max_texture_size"],
         "trash": bool(CONFIG.get("delete_to_trash", True) and TRASH_MODE != "none"),
