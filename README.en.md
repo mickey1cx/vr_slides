@@ -47,7 +47,7 @@ Open `config.json`:
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
 - You can add as many `roots` as you need, each with its own path and mode.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
-- `statefile` — where to keep saved settings (per-directory zoom and chosen language).
+- `statefile` — where to keep saved settings (per-directory zoom, chosen language and last selected source).
 
 ### 2. Generate a certificate
 
@@ -130,7 +130,7 @@ Each file is a flat key → string map. `__name` is the language name shown in t
 
 Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
 
-Saved settings (per-directory zoom and language) live in `state.json`, which is gitignored.
+Saved settings (per-directory zoom, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
 ## Dependencies
 

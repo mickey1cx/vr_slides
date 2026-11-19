@@ -33,7 +33,7 @@ except ImportError:  # Pillow не обязателен
     RESAMPLE = None
 
 CONFIG: dict = {}
-STATE: dict = {"zoom": {}, "lang": None}
+STATE: dict = {"zoom": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 
@@ -203,14 +203,17 @@ def load_state() -> None:
         try:
             data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
+                saved_root = data.get("root")
+                root_ids = {r["id"] for r in CONFIG["roots"]}
                 STATE = {
                     "zoom": data.get("zoom", {}) if isinstance(data.get("zoom"), dict) else {},
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
+                    "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
             return
         except (OSError, ValueError):
             pass
-    STATE = {"zoom": {}, "lang": None}
+    STATE = {"zoom": {}, "lang": None, "root": None}
 
 
 def save_state() -> None:
@@ -308,6 +311,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not valid_language(lang):
                         raise ValueError("Неизвестный язык")
                     STATE["lang"] = lang
+                    changed = True
+                if "root" in payload:
+                    root_id = str(payload["root"])
+                    get_root(root_id)  # проверяем, что каталог разрешён
+                    STATE["root"] = root_id
                     changed = True
                 if changed:
                     save_state()
