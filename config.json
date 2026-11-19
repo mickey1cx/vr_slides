@@ -8,6 +8,7 @@
   "max_texture_size": 4096,
   "language": "ru",
   "statefile": "state.json",
+  "delete_to_trash": true,
   "roots": [
     {
       "id": "demo",

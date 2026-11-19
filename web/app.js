@@ -14,6 +14,10 @@ const NAV_W = 0.52;
 const NAV_H = 0.17;
 const NAV_X = 0.95;
 const EXIT_W = 0.9;
+const DELETE_Y = -0.755;
+const DELETE_W = 0.9;
+const DELETE_H = 0.12;
+const DELETE_TIMEOUT = 5000;
 const BAR_X = 1.42;
 const BAR_TOP = 0.72;
 const BAR_HEIGHT = 1.44;
@@ -32,6 +36,7 @@ const state = {
   dict: {},
   lang: 'ru',
   langs: [],
+  selected: new Set(), // путь картинки внутри текущего каталога
   zoomByRoot: {},
   zoomSaveTimer: null,
   curveByRoot: {},
@@ -60,6 +65,8 @@ const state = {
   lastCanvas: null,
   texExit: null,
   exitCanvas: null,
+  texDelete: null,
+  deleteCanvas: null,
   texCards: [],
   blankCard: null,
   labelCanvas: null,
@@ -72,11 +79,11 @@ const state = {
   curve: 0, // 0 — плоский экран, 1 — максимальный изгиб
   axis: { x: 0, y: 0, last: 0 },
   curveAxis: { y: 0, last: 0 },
-  gripUsedForCurve: false,
-  buttons: { stick: false, b: false, grip: false },
+  buttons: { stick: false, b: false, a: false, grip: false },
   gallery: {
     rel: '', entries: [], cursor: 0, offset: 0, gen: 0,
     ray: null, hover: -1, navHover: '',
+    deleteArmed: false, deleteArmedAt: 0,
   },
 };
 
@@ -86,6 +93,16 @@ const state = {
 
 async function api(url) {
   const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function apiPost(url, payload) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -136,6 +153,7 @@ function applyTexts() {
   const preview = $('#preview');
   if (preview && !preview.querySelector('img')) preview.textContent = t('chooseImage');
   if (state.current >= 0) updateInfo(state.entries[state.current]);
+  updateSelectionUI();
 }
 
 function showError(err) {
@@ -218,6 +236,7 @@ async function init() {
 
   $('#firstBtn').addEventListener('click', () => jumpToEdge(-1));
   $('#lastBtn').addEventListener('click', () => jumpToEdge(1));
+  $('#deleteBtn').addEventListener('click', () => deleteSelected().catch(showError));
 
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));
@@ -234,12 +253,13 @@ async function init() {
   }
 }
 
-async function list() {
+async function list(clearSelection = true) {
   const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(state.rel)}`);
-  applyListing(data);
+  applyListing(data, clearSelection);
 }
 
-function applyListing(data) {
+function applyListing(data, clearSelection = true) {
+  if (clearSelection) state.selected.clear();
   state.entries = data.entries;
   state.images = data.entries.filter((e) => e.type === 'image');
   state.current = -1;
@@ -249,6 +269,7 @@ function applyListing(data) {
   const parts = state.rel.split('/').filter(Boolean);
   $('#crumb').textContent = [rootCfg().name, ...parts].join(' / ');
   renderGrid();
+  updateSelectionUI();
 }
 
 function renderGrid() {
@@ -258,6 +279,7 @@ function renderGrid() {
     const card = document.createElement('button');
     card.className = 'card';
     card.dataset.path = entry.path;
+    if (entry.type === 'image' && state.selected.has(entry.path)) card.classList.add('picked');
     if (entry.type === 'dir') {
       const thumb = document.createElement('div');
       thumb.className = 'thumb';
@@ -275,13 +297,117 @@ function renderGrid() {
       thumb.loading = 'lazy';
       thumb.alt = '';
       thumb.src = thumbUrl(entry);
+      const badge = document.createElement('span');
+      badge.className = 'pick';
+      badge.textContent = '✓';
+      badge.title = t('markTitle');
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMark(entry);
+      });
       const label = document.createElement('span');
       label.textContent = entry.name;
-      card.append(thumb, label);
+      card.append(thumb, badge, label);
       card.addEventListener('click', () => openImage(entry).catch(showError));
     }
     grid.append(card);
   }
+}
+
+function updateSelectionUI() {
+  const count = state.selected.size;
+  if (!count && state.gallery.deleteArmed) {
+    state.gallery.deleteArmed = false;
+  }
+  const button = $('#deleteBtn');
+  if (button) {
+    button.textContent = t('deleteSelected', { count });
+    button.disabled = count === 0;
+  }
+  document.querySelectorAll('#grid .card').forEach((card) => {
+    card.classList.toggle('picked', state.selected.has(card.dataset.path));
+  });
+  if (state.gl) {
+    uploadDeleteTexture(state.gl);
+    updateGalleryHeader();
+  }
+}
+
+function clearSelection() {
+  if (!state.selected.size) return;
+  state.selected.clear();
+  updateSelectionUI();
+}
+
+function toggleMark(entry) {
+  if (!entry || entry.type !== 'image') return;
+  if (state.selected.has(entry.path)) state.selected.delete(entry.path);
+  else state.selected.add(entry.path);
+  updateSelectionUI();
+  if (state.mode === 'gallery') loadGalleryPage();
+}
+
+function markCurrentOrHovered(useCursorFallback = false) {
+  if (state.mode === 'gallery') {
+    const g = state.gallery;
+    if (g.navHover) return;
+    const index = g.hover >= 0 ? g.hover : (useCursorFallback ? g.cursor : -1);
+    const entry = g.entries[index];
+    if (entry && entry.type === 'image') toggleMark(entry);
+  } else {
+    const entry = state.entries[state.current];
+    if (entry && entry.type === 'image') toggleMark(entry);
+  }
+}
+
+async function refreshGallery() {
+  const g = state.gallery;
+  const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(g.rel)}`);
+  if (g.rel === state.rel) applyListing(data, false);
+  g.entries = buildGalleryEntries(data.entries, g.rel);
+  g.cursor = 0;
+  g.offset = 0;
+  g.ray = null;
+  g.hover = -1;
+  g.navHover = '';
+  g.deleteArmed = false;
+  loadGalleryPage();
+  updateGalleryHeader();
+  updateSelectionUI();
+}
+
+async function deleteSelected(confirmFirst = true) {
+  const paths = [...state.selected];
+  if (!paths.length) {
+    showError(t('errNoSelection'));
+    return;
+  }
+  const confirmKey = state.config && state.config.trash ? 'deleteConfirmTrash' : 'deleteConfirm';
+  if (confirmFirst && !window.confirm(t(confirmKey, { count: paths.length }))) return;
+  const rel = state.mode === 'gallery' ? state.gallery.rel : state.rel;
+  await apiPost('/api/delete', { root: state.rootId, rel, paths });
+  state.selected.clear();
+  if (state.mode === 'gallery') {
+    await refreshGallery();
+  } else {
+    state.current = -1;
+    await list();
+  }
+}
+
+function armDelete() {
+  const g = state.gallery;
+  if (!state.selected.size) {
+    showError(t('errNoSelection'));
+    return;
+  }
+  if (!g.deleteArmed) {
+    g.deleteArmed = true;
+    g.deleteArmedAt = performance.now();
+    if (state.gl) uploadDeleteTexture(state.gl);
+    return;
+  }
+  deleteSelected(false).catch(showError);
 }
 
 // Кнопки «в начало / в конец»: прокручиваем сетку к нужной карточке,
@@ -467,7 +593,7 @@ function initGL(gl) {
   hctx.fillRect(0, 0, 1024, 128);
   uploadImage(gl, state.texHeader, state.headerCanvas);
 
-  for (const name of ['first', 'last', 'exit']) {
+  for (const name of ['first', 'last', 'exit', 'delete']) {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 96;
@@ -520,6 +646,24 @@ function uploadNavButtons(gl) {
     ctx.fillText(t(key), 256, 48);
     uploadImage(gl, tex, canvas);
   }
+  uploadDeleteTexture(gl);
+}
+
+function uploadDeleteTexture(gl) {
+  const canvas = state.deleteCanvas;
+  const tex = state.texDelete;
+  if (!canvas || !tex) return;
+  const count = state.selected.size;
+  const armed = state.gallery.deleteArmed;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = !count ? '#242833' : (armed ? '#6a1f24' : '#3a2329');
+  ctx.fillRect(0, 0, 512, 96);
+  ctx.fillStyle = !count ? '#7b8290' : (armed ? '#ffe1e1' : '#ffb9c2');
+  ctx.font = 'bold 38px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(t(armed ? 'deleteVRConfirm' : 'deleteVR', { count }), 256, 48);
+  uploadImage(gl, tex, canvas);
 }
 
 function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4) {
@@ -670,6 +814,7 @@ function toggleGallery() {
     state.gallery.ray = null;
     state.gallery.hover = -1;
     state.gallery.navHover = '';
+    state.gallery.deleteArmed = false;
     if (state.current >= 0) updateLabel(state.entries[state.current]);
     return;
   }
@@ -683,6 +828,7 @@ function toggleGallery() {
   g.ray = null;
   g.hover = -1;
   g.navHover = '';
+  g.deleteArmed = false;
   state.mode = 'gallery';
   loadGalleryPage();
   updateGalleryHeader();
@@ -713,6 +859,15 @@ async function makeCardCanvas(entry) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(entry.name.slice(0, 34), 10, 300);
+  if (entry.type === 'image' && state.selected.has(entry.path)) {
+    ctx.fillStyle = '#ffd34d';
+    ctx.fillRect(452, 12, 48, 48);
+    ctx.fillStyle = '#201a00';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✓', 476, 37);
+  }
   return c;
 }
 
@@ -767,19 +922,21 @@ async function openGallerySelection(index = state.gallery.cursor) {
     g.rel = entry.path;
   } else {
     state.rel = g.rel;
-    await list();
+    await list(false); // открытие фото не покидает каталог — пометки сохраняем
     const target = state.entries.find((e) => e.path === entry.path && e.type === 'image');
     state.mode = 'photo';
     if (target) await openImage(target);
     return;
   }
   const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(g.rel)}`);
+  clearSelection(); // перешли в другой каталог — пометки сбрасываются
   g.entries = buildGalleryEntries(data.entries, g.rel);
   g.cursor = 0;
   g.offset = 0;
   g.ray = null;
   g.hover = -1;
   g.navHover = '';
+  g.deleteArmed = false;
   loadGalleryPage();
   updateGalleryHeader();
 }
@@ -824,6 +981,15 @@ function renderGallery(gl, proj, viewM) {
     scale(BAR_WIDTH * 1.8, thumbH, 1),
   );
   draw(gl, state.texWhite, multiply(proj, multiply(viewM, thumb)), [0, 0], [1, 1], [0.25, 0.6, 1.0]);
+
+  const deleteModel = multiply(
+    translate(0, DELETE_Y, GALLERY_Z - 0.015),
+    scale(DELETE_W, DELETE_H, 1),
+  );
+  const deleteTint = g.navHover === 'delete'
+    ? [1.5, 1.2, 1.2]
+    : (g.deleteArmed ? [1.3, 1.1, 1.1] : [1, 1, 1]);
+  draw(gl, state.texDelete, multiply(proj, multiply(viewM, deleteModel)), [0, 0], [1, 1], deleteTint);
 
   const navButtons = [
     [state.texFirst, -NAV_X, NAV_W, 'first'],
@@ -939,7 +1105,9 @@ function computeRay(frame, refSpace, source) {
       const y = origin.y + dir.y * t;
       ray.point = { x, y, z: GALLERY_Z };
 
-      if (Math.abs(y - NAV_Y) <= NAV_H / 2) {
+      if (Math.abs(x) <= DELETE_W / 2 && Math.abs(y - DELETE_Y) <= DELETE_H / 2) {
+        ray.nav = 'delete';
+      } else if (Math.abs(y - NAV_Y) <= NAV_H / 2) {
         if (Math.abs(x) <= EXIT_W / 2) ray.nav = 'exit';
         else if (Math.abs(x + NAV_X) <= NAV_W / 2) ray.nav = 'first';
         else if (Math.abs(x - NAV_X) <= NAV_W / 2) ray.nav = 'last';
@@ -986,6 +1154,7 @@ function handleInput(pad, time) {
   let dy = 0;
   let stickPressed = false;
   let bPressed = false;
+  let aPressed = false;
   let gripPressed = false;
 
   if (pad) {
@@ -997,13 +1166,12 @@ function handleInput(pad, time) {
     const buttons = pad.buttons || [];
     stickPressed = !!(buttons[3] && buttons[3].pressed);
     bPressed = !!(buttons[5] && buttons[5].pressed);
+    aPressed = !!(buttons[4] && buttons[4].pressed);
     gripPressed = !!(buttons[1] && buttons[1].pressed);
   }
 
-  if (gripPressed && !state.buttons.grip) state.gripUsedForCurve = false;
-  if (!gripPressed && state.buttons.grip && !state.gripUsedForCurve && state.mode === 'photo') {
-    step(-1); // короткое нажатие grip без стика — как раньше: предыдущее фото
-  }
+  const markToggle = aPressed && !state.buttons.a;
+  state.buttons.a = aPressed;
   state.buttons.grip = gripPressed;
 
   const toggle = (stickPressed && !state.buttons.stick) || (bPressed && !state.buttons.b);
@@ -1013,6 +1181,7 @@ function handleInput(pad, time) {
     toggleGallery();
     return;
   }
+  if (markToggle) markCurrentOrHovered();
 
   // Зажатый grip в режиме фото включает настройку изгиба правым стиком.
   if (gripPressed && state.mode === 'photo') {
@@ -1020,7 +1189,6 @@ function handleInput(pad, time) {
       const ca = state.curveAxis;
       if (ca.y !== dy || time - ca.last > STICK_REPEAT) {
         curveBy(dy);
-        state.gripUsedForCurve = true;
         ca.y = dy;
         ca.last = time;
       }
@@ -1063,6 +1231,14 @@ function onKey(e) {
     toggleGallery();
     return;
   }
+  if (e.key === 'm' || e.key === 'M') {
+    markCurrentOrHovered(true);
+    return;
+  }
+  if (e.key === 'Delete') {
+    deleteSelected().catch(showError);
+    return;
+  }
   if (state.mode === 'gallery') {
     if (e.key === 'ArrowLeft') moveCursor(-1);
     if (e.key === 'ArrowRight') moveCursor(1);
@@ -1097,6 +1273,10 @@ function onFrame(time, frame) {
   g.ray = ray;
   g.hover = ray && ray.index >= 0 && ray.index < g.entries.length ? ray.index : -1;
   g.navHover = ray ? ray.nav : '';
+  if (g.deleteArmed && time - g.deleteArmedAt > DELETE_TIMEOUT) {
+    g.deleteArmed = false;
+    if (state.gl) uploadDeleteTexture(state.gl);
+  }
 
   if (!pose) {
     session.requestAnimationFrame(onFrame, refSpace);
@@ -1147,6 +1327,7 @@ async function enterVR() {
   state.session = session;
   state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
   setCurve(state.curveByRoot[state.rootId] ?? 0, false);
+  state.gallery.deleteArmed = false;
 
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
@@ -1161,13 +1342,15 @@ async function enterVR() {
   state.refSpace = await session.requestReferenceSpace('local');
 
   session.addEventListener('select', () => {
-    if (state.mode !== 'gallery') {
-      step(1);
-      return;
-    }
+    // Триггер в режиме фото больше не листает — пометки ставит кнопка A.
+    if (state.mode !== 'gallery') return;
     const g = state.gallery;
     if (g.navHover === 'exit' && state.session) {
       state.session.end();
+      return;
+    }
+    if (g.navHover === 'delete') {
+      armDelete();
       return;
     }
     if (g.navHover === 'first' || g.navHover === 'last') {
@@ -1180,11 +1363,8 @@ async function enterVR() {
     openGallerySelection(target).catch(showError);
   });
   session.addEventListener('squeeze', () => {
-    if (state.mode === 'gallery') {
-      state.gripUsedForCurve = true; // чтобы отпускание grip не листало фото
-      toggleGallery();
-    }
-    // В режиме фото короткое нажатие grip обрабатывается в handleInput.
+    if (state.mode === 'gallery') toggleGallery();
+    // В режиме фото grip — только модификатор изгиба в сочетании со стиком.
   });
   session.addEventListener('end', () => {
     state.session = null;
@@ -1194,8 +1374,8 @@ async function enterVR() {
     state.gallery.ray = null;
     state.gallery.hover = -1;
     state.gallery.navHover = '';
-    state.buttons.grip = false;
-    state.gripUsedForCurve = false;
+    state.gallery.deleteArmed = false;
+    state.buttons = { stick: false, b: false, a: false, grip: false };
     state.curveAxis.y = 0;
     $('#vrBtn').disabled = state.current < 0;
   });
