@@ -31,11 +31,16 @@
       <h2 data-i18n="selected">Выбранное</h2>
       <div id="preview" class="preview"></div>
       <div id="info" class="info"></div>
+      <label class="setting">
+        <span data-i18n="curveLabel">Изгиб экрана</span>
+        <input id="curveRange" type="range" min="0" max="100" step="1" value="0">
+        <output id="curveValue">0%</output>
+      </label>
       <button id="vrBtn" class="primary" disabled data-i18n="enterVR">Войти в VR</button>
       <div class="hint">
         <b data-i18n="questHintPrefix">На Quest 3 откройте</b> <span id="questUrl" class="mono"></span>
         <span data-i18n="questHintSuffix">в браузере и примите предупреждение о сертификате.</span><br>
-        <b data-i18n="vrHintPrefix">В VR:</b> <span data-i18n="vrHint2D">триггер — следующее фото, grip — предыдущее.</span><br>
+        <b data-i18n="vrHintPrefix">В VR:</b> <span data-i18n="vrHint2D">триггер — следующее фото, grip — предыдущее, grip + стик ↑↓ — изгиб экрана.</span><br>
         <span data-i18n="galleryNavHint"></span>
       </div>
     </aside>
