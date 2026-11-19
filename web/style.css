@@ -174,5 +174,15 @@ main {
   font-family: ui-monospace, Consolas, monospace;
 }
 
+.view-settings {
+  margin: 14px 0 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.view-settings legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
+.view-settings .setting { margin-top: 8px; }
+#resetViewBtn { width: 100%; margin-top: 10px; }
+
 .hint { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .error { margin-bottom: 12px; padding: 10px; border: 1px solid #a33; border-radius: 6px; background: #2a1414; }
