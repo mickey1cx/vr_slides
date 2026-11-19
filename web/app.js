@@ -9,13 +9,21 @@ const CARD_H = 0.35;
 const GAP_X = 0.62;
 const GAP_Y = 0.46;
 const GALLERY_Z = -2.2;
-const EXIT_Y = -0.92;
+const NAV_Y = -0.92;
+const NAV_W = 0.52;
+const NAV_H = 0.17;
+const NAV_X = 0.95;
+const EXIT_W = 0.9;
 const BAR_X = 1.42;
 const BAR_TOP = 0.72;
 const BAR_HEIGHT = 1.44;
 const BAR_WIDTH = 0.035;
 const STICK_DEAD = 0.6;
 const STICK_REPEAT = 320; // мс между повторами при удержании
+// Луч попадает в плашку только по её центральной области: промежутки между
+// плашками остаются «пустым местом» и не перехватывают выделение стиком.
+const HIT_W = CARD_W * 0.44;
+const HIT_H = CARD_H * 0.42;
 
 const state = {
   config: null,
@@ -39,6 +47,10 @@ const state = {
   texLabel: null,
   texWhite: null,
   texHeader: null,
+  texFirst: null,
+  firstCanvas: null,
+  texLast: null,
+  lastCanvas: null,
   texExit: null,
   exitCanvas: null,
   texCards: [],
@@ -52,7 +64,10 @@ const state = {
   zoom: 1.0,
   axis: { x: 0, y: 0, last: 0 },
   buttons: { stick: false, b: false },
-  gallery: { rel: '', entries: [], cursor: 0, offset: 0, gen: 0, ray: null, hover: -1, exitHover: false },
+  gallery: {
+    rel: '', entries: [], cursor: 0, offset: 0, gen: 0,
+    ray: null, hover: -1, navHover: '',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +110,7 @@ async function setLanguage(code, persist = true) {
   if (state.gl) {
     if (state.current >= 0) updateLabel(state.entries[state.current]);
     updateGalleryHeader();
-    uploadExitTexture(state.gl);
+    uploadNavButtons(state.gl);
   }
   if (persist) await saveState({ lang: code });
 }
@@ -184,6 +199,9 @@ async function init() {
     list().catch(showError);
   });
 
+  $('#firstBtn').addEventListener('click', () => jumpToEdge(-1));
+  $('#lastBtn').addEventListener('click', () => jumpToEdge(1));
+
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));
 
@@ -220,6 +238,7 @@ function renderGrid() {
   for (const entry of state.entries) {
     const card = document.createElement('button');
     card.className = 'card';
+    card.dataset.path = entry.path;
     if (entry.type === 'dir') {
       const thumb = document.createElement('div');
       thumb.className = 'thumb';
@@ -243,6 +262,29 @@ function renderGrid() {
       card.addEventListener('click', () => openImage(entry).catch(showError));
     }
     grid.append(card);
+  }
+}
+
+// Кнопки «в начало / в конец»: прокручиваем сетку к нужной карточке,
+// подсвечиваем её и открываем — так же, как если бы по ней кликнули.
+function jumpToEdge(direction) {
+  const candidates = state.images.length ? state.images : state.entries.filter((e) => e.type === 'dir');
+  if (!candidates.length) return;
+  const entry = direction < 0 ? candidates[0] : candidates[candidates.length - 1];
+
+  const grid = $('#grid');
+  grid.querySelectorAll('.card.active').forEach((el) => el.classList.remove('active'));
+  const card = Array.from(grid.querySelectorAll('.card')).find((el) => el.dataset.path === entry.path);
+  if (card) {
+    card.classList.add('active');
+    card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  if (entry.type === 'image') {
+    openImage(entry).catch(showError);
+  } else {
+    state.rel = entry.path;
+    list().catch(showError);
   }
 }
 
@@ -399,11 +441,14 @@ function initGL(gl) {
   hctx.fillRect(0, 0, 1024, 128);
   uploadImage(gl, state.texHeader, state.headerCanvas);
 
-  state.exitCanvas = document.createElement('canvas');
-  state.exitCanvas.width = 512;
-  state.exitCanvas.height = 96;
-  state.texExit = makeTexture(gl);
-  uploadExitTexture(gl);
+  for (const name of ['first', 'last', 'exit']) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 96;
+    state[`${name}Canvas`] = canvas;
+    state[`tex${name[0].toUpperCase()}${name.slice(1)}`] = makeTexture(gl);
+  }
+  uploadNavButtons(gl);
 
   const white = document.createElement('canvas');
   white.width = white.height = 2;
@@ -429,18 +474,26 @@ function initGL(gl) {
   gl.disable(gl.DEPTH_TEST);
 }
 
-function uploadExitTexture(gl) {
-  const canvas = state.exitCanvas;
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#4a1d24';
-  ctx.fillRect(0, 0, 512, 96);
-  ctx.fillStyle = '#ffd7dc';
-  ctx.font = 'bold 40px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(t('exitVR'), 256, 48);
-  uploadImage(gl, state.texExit, canvas);
+function uploadNavButtons(gl) {
+  const specs = [
+    ['first', 'first', '#1d3550', '#cfe6ff'],
+    ['last', 'last', '#1d3550', '#cfe6ff'],
+    ['exit', 'exitVR', '#4a1d24', '#ffd7dc'],
+  ];
+  for (const [name, key, bg, fg] of specs) {
+    const canvas = state[`${name}Canvas`];
+    const tex = state[`tex${name[0].toUpperCase()}${name.slice(1)}`];
+    if (!canvas || !tex) continue;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 512, 96);
+    ctx.fillStyle = fg;
+    ctx.font = 'bold 40px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t(key), 256, 48);
+    uploadImage(gl, tex, canvas);
+  }
 }
 
 function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1]) {
@@ -523,7 +576,7 @@ function toggleGallery() {
     state.mode = 'photo';
     state.gallery.ray = null;
     state.gallery.hover = -1;
-    state.gallery.exitHover = false;
+    state.gallery.navHover = '';
     if (state.current >= 0) updateLabel(state.entries[state.current]);
     return;
   }
@@ -536,7 +589,7 @@ function toggleGallery() {
   g.offset = clamp(g.cursor - Math.floor(SLOTS / 2), 0, Math.max(0, g.entries.length - SLOTS));
   g.ray = null;
   g.hover = -1;
-  g.exitHover = false;
+  g.navHover = '';
   state.mode = 'gallery';
   loadGalleryPage();
   updateGalleryHeader();
@@ -633,7 +686,7 @@ async function openGallerySelection(index = state.gallery.cursor) {
   g.offset = 0;
   g.ray = null;
   g.hover = -1;
-  g.exitHover = false;
+  g.navHover = '';
   loadGalleryPage();
   updateGalleryHeader();
 }
@@ -651,14 +704,14 @@ function renderGallery(gl, proj, viewM) {
 
     if (idx === g.cursor || idx === g.hover) {
       const hovered = idx === g.hover && idx !== g.cursor;
+      // Луч в пустом месте: подсвечиваем курсор ярче — триггер откроет именно его.
+      const armed = idx === g.cursor && g.ray && g.hover < 0 && !g.navHover;
       const hm = multiply(
         translate(x, y, GALLERY_Z - 0.02),
-        scale(CARD_W + 0.055, CARD_H + 0.055, 1),
+        scale(CARD_W + (armed ? 0.085 : 0.055), CARD_H + (armed ? 0.085 : 0.055), 1),
       );
-      draw(
-        gl, state.texWhite, multiply(proj, multiply(viewM, hm)), [0, 0], [1, 1],
-        hovered ? [0.5, 0.9, 1.0] : [0.2, 0.55, 1.0],
-      );
+      const tint = hovered ? [0.5, 0.9, 1.0] : (armed ? [0.45, 1.0, 0.75] : [0.2, 0.55, 1.0]);
+      draw(gl, state.texWhite, multiply(proj, multiply(viewM, hm)), [0, 0], [1, 1], tint);
     }
 
     const model = multiply(translate(x, y, GALLERY_Z), scale(CARD_W, CARD_H, 1));
@@ -679,11 +732,16 @@ function renderGallery(gl, proj, viewM) {
   );
   draw(gl, state.texWhite, multiply(proj, multiply(viewM, thumb)), [0, 0], [1, 1], [0.25, 0.6, 1.0]);
 
-  const exitModel = multiply(translate(0, EXIT_Y, GALLERY_Z), scale(0.9, 0.17, 1));
-  draw(
-    gl, state.texExit, multiply(proj, multiply(viewM, exitModel)), [0, 0], [1, 1],
-    g.exitHover ? [1.4, 1.1, 1.1] : [1, 1, 1],
-  );
+  const navButtons = [
+    [state.texFirst, -NAV_X, NAV_W, 'first'],
+    [state.texExit, 0, EXIT_W, 'exit'],
+    [state.texLast, NAV_X, NAV_W, 'last'],
+  ];
+  for (const [tex, x, width, name] of navButtons) {
+    const model = multiply(translate(x, NAV_Y, GALLERY_Z - 0.01), scale(width, NAV_H, 1));
+    const tint = g.navHover === name ? [1.4, 1.2, 1.2] : [1, 1, 1];
+    draw(gl, tex, multiply(proj, multiply(viewM, model)), [0, 0], [1, 1], tint);
+  }
 
   const headerModel = multiply(translate(0, 0.92, GALLERY_Z), scale(1.8, 0.225, 1));
   draw(gl, state.texHeader, multiply(proj, multiply(viewM, headerModel)), [0, 0], [1, 1]);
@@ -779,7 +837,7 @@ function computeRay(frame, refSpace, source) {
 
   const origin = pose.transform.position;
   const dir = rotateByQuat({ x: 0, y: 0, z: -1 }, pose.transform.orientation);
-  const ray = { origin, dir, point: null, index: -1, exit: false };
+  const ray = { origin, dir, point: null, index: -1, nav: '' };
 
   if (Math.abs(dir.z) > 1e-4) {
     const t = (GALLERY_Z - origin.z) / dir.z;
@@ -788,16 +846,19 @@ function computeRay(frame, refSpace, source) {
       const y = origin.y + dir.y * t;
       ray.point = { x, y, z: GALLERY_Z };
 
-      if (Math.abs(x) <= 0.45 && Math.abs(y - EXIT_Y) <= 0.085) {
-        ray.exit = true;
-      } else {
+      if (Math.abs(y - NAV_Y) <= NAV_H / 2) {
+        if (Math.abs(x) <= EXIT_W / 2) ray.nav = 'exit';
+        else if (Math.abs(x + NAV_X) <= NAV_W / 2) ray.nav = 'first';
+        else if (Math.abs(x - NAV_X) <= NAV_W / 2) ray.nav = 'last';
+      }
+      if (!ray.nav) {
         const g = state.gallery;
         for (let slot = 0; slot < SLOTS; slot++) {
           const col = slot % COLS;
           const row = Math.floor(slot / COLS);
           const cx = (col - (COLS - 1) / 2) * GAP_X;
           const cy = ((ROWS - 1) / 2 - row) * GAP_Y;
-          if (Math.abs(x - cx) <= CARD_W / 2 && Math.abs(y - cy) <= CARD_H / 2) {
+          if (Math.abs(x - cx) <= HIT_W && Math.abs(y - cy) <= HIT_H) {
             ray.index = g.offset + slot;
             break;
           }
@@ -887,6 +948,8 @@ function onKey(e) {
     if (e.key === 'ArrowRight') moveCursor(1);
     if (e.key === 'ArrowUp') moveCursor(-COLS);
     if (e.key === 'ArrowDown') moveCursor(COLS);
+    if (e.key === 'Home') setCursor(0);
+    if (e.key === 'End') setCursor(state.gallery.entries.length - 1);
     if (e.key === 'Enter') openGallerySelection().catch(showError);
   } else {
     if (e.key === 'ArrowRight') step(1);
@@ -911,7 +974,7 @@ function onFrame(time, frame) {
   const g = state.gallery;
   g.ray = ray;
   g.hover = ray && ray.index >= 0 && ray.index < g.entries.length ? ray.index : -1;
-  g.exitHover = !!(ray && ray.exit);
+  g.navHover = ray ? ray.nav : '';
 
   if (!pose) {
     session.requestAnimationFrame(onFrame, refSpace);
@@ -985,11 +1048,18 @@ async function enterVR() {
       step(1);
       return;
     }
-    if (state.gallery.exitHover && state.session) {
+    const g = state.gallery;
+    if (g.navHover === 'exit' && state.session) {
       state.session.end();
       return;
     }
-    const target = state.gallery.hover >= 0 ? state.gallery.hover : state.gallery.cursor;
+    if (g.navHover === 'first' || g.navHover === 'last') {
+      setCursor(g.navHover === 'first' ? 0 : g.entries.length - 1);
+      return;
+    }
+    // Луч попал в пустое место (или не попал ни во что) — открываем то,
+    // что выбрано стиком. Луч поверх плашки открывает плашку под лучом.
+    const target = g.hover >= 0 ? g.hover : g.cursor;
     openGallerySelection(target).catch(showError);
   });
   session.addEventListener('squeeze', () => {
@@ -1003,7 +1073,7 @@ async function enterVR() {
     state.mode = 'photo';
     state.gallery.ray = null;
     state.gallery.hover = -1;
-    state.gallery.exitHover = false;
+    state.gallery.navHover = '';
     $('#vrBtn').disabled = state.current < 0;
   });
 

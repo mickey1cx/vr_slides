@@ -10,14 +10,20 @@
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* прокручивается только сетка */
 }
 
 header {
+  flex: none;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -53,11 +59,40 @@ button.primary {
   font-weight: 600;
 }
 
-main { display: flex; gap: 20px; padding: 20px; align-items: flex-start; }
-.browser { flex: 1; min-width: 0; }
-.viewer { width: 340px; flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+main {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+/* Только эта область прокручивается: меню и панель выбранного фото остаются на месте. */
+.browser { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.viewer {
+  width: 340px;
+  flex: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-y: auto;
+  align-self: flex-start;
+  max-height: 100%;
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  align-content: start;
+  gap: 12px;
+  padding-right: 6px;
+}
 
 .card {
   display: flex;
@@ -67,6 +102,7 @@ main { display: flex; gap: 20px; padding: 20px; align-items: flex-start; }
   text-align: left;
   min-width: 0;
 }
+.card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .card .thumb {
   width: 100%;
   aspect-ratio: 2 / 1;
