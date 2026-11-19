@@ -26,10 +26,16 @@ const STICK_DEAD = 0.6;
 const STICK_REPEAT = 320; // мс между повторами при удержании
 const PHOTO_SEGMENTS = 64; // сегменты по горизонтали для изогнутого экрана
 const CURVE_STEP = 0.08; // шаг изменения изгиба за один повтор стика
-const PAN_STEP = 0.08; // шаг панорамы за один повтор стика
-const SHIFT_STEP = 0.005; // шаг стерео-сдвига (0.5% ширины глаза)
-const PAN_BASE = 0.35; // смещение при 1×, чтобы слайдер всегда давал эффект
-const PAN_GAIN = 1.0; // дополнительное смещение при зуме
+// Значения по умолчанию; сервер может переопределить их блоком "controls" в config.json.
+const DEFAULT_CONTROLS = {
+  panInvertX: true,   // стик вправо → кадр вправо (было: кадр влево)
+  panInvertY: true,   // стик вверх → кадр вверх (было: кадр вниз)
+  shiftInvert: false,
+  panStep: 0.08,
+  shiftStep: 0.005,
+  panBase: 0.35,      // смещение при 1×, чтобы слайдер всегда давал эффект
+  panGain: 1.0,       // дополнительное смещение при зуме
+};
 // Луч попадает в плашку только по её центральной области: промежутки между
 // плашками остаются «пустым местом» и не перехватывают выделение стиком.
 const HIT_W = CARD_W * 0.44;
@@ -37,6 +43,7 @@ const HIT_H = CARD_H * 0.42;
 
 const state = {
   config: null,
+  controls: { ...DEFAULT_CONTROLS },
   dict: {},
   lang: 'ru',
   langs: [],
@@ -208,6 +215,7 @@ async function init() {
     api('/api/i18n/list'),
   ]);
   state.config = cfg;
+  state.controls = { ...DEFAULT_CONTROLS, ...(cfg.controls || {}) };
   state.langs = langs;
   const qrLink = $('#qrLink');
   if (qrLink) qrLink.hidden = !cfg.qr;
@@ -905,15 +913,20 @@ function setView(values, persist = true) {
 
 function panBy(dx, dy) {
   if (!dx && !dy) return;
+  const c = state.controls;
+  const sx = c.panInvertX ? 1 : -1;
+  const sy = c.panInvertY ? -1 : 1;
   setView({
-    panX: state.view.panX - dx * PAN_STEP, // стик вправо — смотрим правее, кадр уходит влево
-    panY: state.view.panY + dy * PAN_STEP, // стик вверх — смотрим выше, кадр уходит вниз
+    panX: state.view.panX + dx * sx * c.panStep,
+    panY: state.view.panY + dy * sy * c.panStep,
   });
 }
 
 function shiftBy(dx) {
   if (!dx) return;
-  setView({ shift: state.view.shift + dx * SHIFT_STEP });
+  const c = state.controls;
+  const sign = c.shiftInvert ? -1 : 1;
+  setView({ shift: state.view.shift + dx * sign * c.shiftStep });
 }
 
 function resetView() {
@@ -944,7 +957,8 @@ function updateViewUI() {
 function photoPanModel() {
   const halfW = (state.height * state.aspect) / 2;
   const halfH = state.height / 2;
-  const gain = PAN_BASE + Math.max(0, 1 - 1 / state.zoom) * PAN_GAIN;
+  const c = state.controls;
+  const gain = c.panBase + Math.max(0, 1 - 1 / state.zoom) * c.panGain;
   return translate(state.view.panX * halfW * gain, state.view.panY * halfH * gain, 0);
 }
 

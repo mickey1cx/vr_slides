@@ -30,6 +30,15 @@ Open `config.json`:
   "statefile": "state.json",
   "qr": true,
   "qrfile": "cert/connect.png",
+  "controls": {
+    "panInvertX": true,
+    "panInvertY": true,
+    "shiftInvert": false,
+    "panStep": 0.08,
+    "shiftStep": 0.005,
+    "panBase": 0.35,
+    "panGain": 1.0
+  },
   "delete_to_trash": true,
   "roots": [
     {
@@ -52,6 +61,7 @@ Open `config.json`:
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
 - `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, chosen language and last selected source).
 - `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
+- `controls` — thumbstick pan and stereo shift settings (see below).
 - `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
 
 ### 2. Generate a certificate
@@ -112,7 +122,7 @@ The QR encodes the same address that is used for the certificate. If the IP chan
    **Photo mode**
    - **Right thumbstick left/right** — previous/next photo (with repeat delay when held);
    - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo). The value is **saved separately for each source directory** and restored next time you enter VR;
-   - **Trigger + thumbstick** — pan across the frame horizontally and vertically. The effect is visible at 1× and grows with zoom. Pan values are saved together with zoom and curvature;
+   - **Trigger + thumbstick** — pan across the frame: the photo moves **in the same direction you push the stick** (up → up, right → right). The effect is visible at 1× and grows with zoom. Pan values are saved together with zoom and curvature;
    - **Grip/squeeze + thumbstick ↔** — stereo shift for the right eye (−10%…+10% of one eye's width), useful when the SBS views drift apart. **Grip + thumbstick ↑↓** still sets the bend from 0–100%. While grip is held, the stick does not browse photos;
    - **A button** — toggle a mark on the current photo. A marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint;
    - **Press the thumbstick** or the **B/Y** button — open the 3D gallery. Trigger and grip alone no longer browse photos in photo mode.
@@ -131,6 +141,22 @@ The QR encodes the same address that is used for the certificate. If the IP chan
    On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Shift` + arrows (pan), `Shift` + `[` / `]` (stereo shift), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `A` / `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
    The hint panel under the photo and the gallery header show the current controls right in VR.
+
+#### Control settings (`controls`)
+
+All trigger + thumbstick pan parameters live in `config.json` — no code edits needed:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `panInvertX` | `true` | Stick right → photo right. `false` restores the old behavior (photo left). |
+| `panInvertY` | `true` | Stick up → photo up. `false` restores the old behavior (photo down). |
+| `shiftInvert` | `false` | Invert the stereo shift direction (grip + stick ↔). |
+| `panStep` | `0.08` | Pan step per stick repeat (0.08 = 8% of the half-frame width). |
+| `shiftStep` | `0.005` | Stereo shift step (0.5% of one eye's width). |
+| `panBase` | `0.35` | Pan factor at 1× so the slider works without zoom. |
+| `panGain` | `1.0` | Extra factor added as zoom increases. |
+
+The inversion also applies to the PC `Shift` + arrow shortcuts, so keyboard and VR pan in the same direction. Values are range-checked on the server; invalid ones fall back to the defaults.
 
 ### 5. Interface language
 
