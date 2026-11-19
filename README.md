@@ -1,5 +1,7 @@
 # VR-браузер SBS-стереофото для Oculus Quest 3
 
+[English version](README.en.md)
+
 Локальный сервер на ПК + страница в браузере очков. Никаких Steam Link / Virtual Desktop / SteamVR: Quest 3 сам рендерит стерео через **WebXR**.
 
 ## Как это работает
