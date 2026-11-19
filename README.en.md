@@ -182,10 +182,18 @@ Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo
 
 ## Roadmap
 
-Near-term items (not implemented yet):
+Not implemented yet.
+
+### Near term
 
 - [ ] **Hand tracking.** Controller-free input via WebXR `hand-tracking`: a pinch gesture instead of the trigger, hand movement for pan, spreading fingers for zoom. Everything is currently bound to the thumbstick and buttons — gesture equivalents are needed for browsing photos, opening a card, marking and deleting, plus hints that switch depending on the active input method.
 - [ ] **MR (mixed reality).** An `immersive-ar` session with Quest 3 color passthrough: place the photo panel and the 3D gallery in the real room and adjust the panel position and size with your hands. This needs a separate WebXR session mode, spatial anchoring and UI adaptation (the current bar is designed for VR).
+
+### Mid term
+
+- [ ] **Multiple headsets.** Two or more Quest units connected to one server at the same time, each with its own selected photo, zoom/curvature/pan and marks. State is currently shared per directory, so sessions would overwrite each other — a sync channel (WebSocket/SSE) is needed, plus an optional "lead headset" mode that broadcasts the selection to the others.
+- [ ] **Phone remote.** A companion page on the same LAN: photo list, selection, browsing, pan and slideshow control from a phone. Connect via a QR link to the headset session and share one command channel with the VR client.
+- [ ] **Slideshow.** Auto-advance with a configurable interval, cross-fade between photos, play/pause and shuffle. Controlled from VR and from the phone remote; interval and order are saved with the other per-directory settings.
 
 ## Dependencies
 
