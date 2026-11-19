@@ -28,6 +28,8 @@ Open `config.json`:
   "max_texture_size": 4096,
   "language": "en",
   "statefile": "state.json",
+  "qr": true,
+  "qrfile": "cert/connect.png",
   "delete_to_trash": true,
   "roots": [
     {
@@ -49,6 +51,7 @@ Open `config.json`:
 - You can add as many `roots` as you need, each with its own path and mode.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
 - `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, chosen language and last selected source).
+- `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
 - `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
 
 ### 2. Generate a certificate
@@ -81,11 +84,22 @@ Or manually:
 python server.py
 ```
 
-Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context).
+Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context), `--no-qr` (skip QR generation at startup).
+
+At startup the server prints the URL and the QR file path:
+
+```text
+Откройте на Quest 3: https://192.168.1.50:8443
+QR-код: cert/connect.png  (или https://192.168.1.50:8443/qr)
+```
+
+The QR encodes the same address that is used for the certificate. If the IP changes, regenerate the certificate and restart the server — the QR is recreated automatically.
+
+> Quest 3 has no general built-in QR scanner: its system QR support is limited to Wi‑Fi setup. To open the link from a QR, install any third-party QR scanner app on Quest (App Lab/SideQuest), or just type the URL manually. After the first visit you can bookmark it in Quest Browser.
 
 ### 4. On Quest 3
 
-1. Open **Browser** and enter `https://<PC-IP>:8443`.
+1. Open **Browser** and enter `https://<PC-IP>:8443` (or scan the generated QR with a third-party scanner).
 2. At the certificate warning choose **Advanced → Proceed** (required: without accepting the certificate WebXR will not start).
 3. Pick a photo and press **Enter VR**.
 
@@ -146,6 +160,8 @@ The server runs on plain Python 3.10+: no external packages required.
 
 `Pillow` is optional (`pip install -r requirements.txt`): without it, thumbnails and downscaling are disabled and the browser downloads full files, which is noticeably slower for a large collection.
 
+`segno` is also optional: it is only needed to generate the QR image at startup. Without it the server works as before and just prints the URL.
+
 ## Structure
 
 ```
@@ -157,7 +173,7 @@ web/app.js         — SBS loading, WebGL rendering, WebXR session, input
 web/style.css
 web/i18n/*.json    — translation files (one file per language)
 state.json         — saved zoom/curve/view per directory, language and source (do not commit)
-cert/              — certificates (do not commit)
+cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 ```
 

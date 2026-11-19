@@ -22,6 +22,7 @@
   "shiftLabel": "Stereo shift",
   "resetView": "Reset view",
   "markTitle": "Toggle mark",
+  "qrLink": "QR code",
   "deleteSelected": "Delete marked ({count})",
   "deleteConfirm": "Delete marked files ({count})? This cannot be undone.",
   "deleteConfirmTrash": "Move marked files ({count}) to trash?",

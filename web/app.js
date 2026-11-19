@@ -209,6 +209,8 @@ async function init() {
   ]);
   state.config = cfg;
   state.langs = langs;
+  const qrLink = $('#qrLink');
+  if (qrLink) qrLink.hidden = !cfg.qr;
   state.zoomByRoot = saved.zoom || {};
   state.curveByRoot = saved.curve || {};
   state.viewByRoot = saved.view || {};

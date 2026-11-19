@@ -8,6 +8,8 @@
   "max_texture_size": 4096,
   "language": "ru",
   "statefile": "state.json",
+  "qr": true,
+  "qrfile": "cert/connect.png",
   "delete_to_trash": true,
   "roots": [
     {

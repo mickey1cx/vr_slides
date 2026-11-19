@@ -22,6 +22,7 @@
   "shiftLabel": "Стерео-сдвиг",
   "resetView": "Сбросить вид",
   "markTitle": "Пометить / снять пометку",
+  "qrLink": "QR-код",
   "deleteSelected": "Удалить отмеченные ({count})",
   "deleteConfirm": "Удалить отмеченные файлы ({count})? Действие необратимо.",
   "deleteConfirmTrash": "Переместить отмеченные файлы ({count}) в корзину?",
