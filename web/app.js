@@ -37,6 +37,7 @@ const state = {
   height: 1.2,
   aspect: 1.0,
   mode: 'photo', // photo | gallery
+  zoom: 1.0,
   axis: { x: 0, y: 0, last: 0 },
   buttons: { stick: false, b: false },
   gallery: { rel: '', entries: [], cursor: 0, page: 0, gen: 0 },
@@ -364,8 +365,18 @@ function updateLabel(entry) {
   ctx.fillText(`${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '22px sans-serif';
-  ctx.fillText('стик влево/вправо — листать · нажать стик или B — галерея', 16, 142);
+  ctx.fillText(
+    `стик ← → листать · ↑ ↓ зум ${state.zoom.toFixed(1)}× · нажать стик/B — галерея`,
+    16, 142,
+  );
   uploadImage(state.gl, state.texLabel, canvas);
+}
+
+function zoomBy(direction) {
+  const factor = direction < 0 ? 1.12 : 1 / 1.12; // вверх — приблизить
+  state.zoom = Math.min(2.5, Math.max(0.6, state.zoom * factor));
+  const entry = state.entries[state.current];
+  if (entry && state.gl) updateLabel(entry);
 }
 
 // ---------------------------------------------------------------------------
@@ -601,6 +612,7 @@ function handleInput(session, time) {
   if (axis.x !== dx || axis.y !== dy || time - axis.last > STICK_REPEAT) {
     if (state.mode === 'photo') {
       if (dx) step(dx);
+      if (dy) zoomBy(dy);
     } else if (dx) {
       moveCursor(dx);
     } else if (dy) {
@@ -626,6 +638,8 @@ function onKey(e) {
   } else {
     if (e.key === 'ArrowRight') step(1);
     if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowUp') zoomBy(-1);
+    if (e.key === 'ArrowDown') zoomBy(1);
   }
 }
 
@@ -662,8 +676,9 @@ function onFrame(time, frame) {
     }
 
     const w = state.height * state.aspect;
+    const z = state.distance / state.zoom;
     const model = multiply(
-      translate(0, 0, -state.distance),
+      translate(0, 0, -z),
       scale(w, state.height, 1),
     );
     const mvp = multiply(proj, multiply(viewM, model));
@@ -671,7 +686,7 @@ function onFrame(time, frame) {
     draw(gl, state.texPhoto, mvp, right ? [0.5, 0] : [0, 0], [0.5, 1]);
 
     const labelModel = multiply(
-      translate(0, -state.height / 2 - 0.2, -state.distance),
+      translate(0, -state.height / 2 - 0.2, -z),
       scale(1.2, 0.225, 1),
     );
     draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
@@ -690,6 +705,7 @@ async function enterVR() {
 
   const session = await navigator.xr.requestSession('immersive-vr');
   state.session = session;
+  state.zoom = 1.0;
 
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
