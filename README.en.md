@@ -86,6 +86,9 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
 1. Open **Browser** and enter `https://<PC-IP>:8443`.
 2. At the certificate warning choose **Advanced → Proceed** (required: without accepting the certificate WebXR will not start).
 3. Pick a photo and press **Enter VR**.
+
+   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it.
+
 4. VR controls:
 
    **Photo mode**
@@ -98,11 +101,12 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
    - 12 visible cards (4×3) with a **vertical scrollbar** on the right: cards slide continuously as the cursor moves, and the bar shows your position in the list;
    - **Right controller ray** works only here: pointing highlights a card and the trigger opens it. The ray is disabled in photo mode;
    - **Thumbstick left/right** — move the selection, **up/down** — move one row;
-   - **Trigger** — open the selection: a folder is entered, `↑ Назад` goes up one level, a photo is displayed;
+   - **Trigger** — open the selection: a folder is entered, the "Back" card goes up one level, a photo is displayed. If you press the trigger while the ray points at **empty space between the cards** (or at nothing), the item selected with the **thumbstick** is opened — its frame is highlighted brighter to show this;
+   - **"⏮ To start" / "To end ⏭" buttons** at the bottom of the gallery move the cursor to the first/last item of the directory (point and press trigger);
    - **"Exit VR" button** at the bottom of the gallery (point at it and press the trigger);
    - **Grip**, **thumbstick press** or **B/Y** — return to the photo.
 
-   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Enter` (open), `G` (switch mode) and `Escape` (exit VR).
+   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode) and `Escape` (exit VR).
 
    The hint panel under the photo and the gallery header show the current controls right in VR.
 
