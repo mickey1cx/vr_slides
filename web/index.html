@@ -8,10 +8,11 @@
 </head>
 <body>
   <header>
-    <h1>VR Стерео-галерея <small>Quest 3 · SBS</small></h1>
+    <h1><span data-i18n="heading">VR Стерео-галерея</span> <small data-i18n="headingSmall">Quest 3 · SBS</small></h1>
     <div class="bar">
-      <label>Каталог <select id="rootSelect"></select></label>
-      <button id="upBtn" title="На уровень выше">↑ Назад</button>
+      <label><span data-i18n="languageLabel">Язык</span> <select id="langSelect"></select></label>
+      <label><span data-i18n="rootLabel">Каталог</span> <select id="rootSelect"></select></label>
+      <button id="upBtn" data-i18n="up" data-i18n-title="up" title="↑ Назад">↑ Назад</button>
       <span id="crumb" class="crumb"></span>
       <span class="spacer"></span>
       <span id="url" class="url"></span>
@@ -25,15 +26,14 @@
     </section>
 
     <aside class="viewer">
-      <h2>Выбранное</h2>
-      <div id="preview" class="preview">Выберите изображение</div>
+      <h2 data-i18n="selected">Выбранное</h2>
+      <div id="preview" class="preview"></div>
       <div id="info" class="info"></div>
-      <button id="vrBtn" class="primary" disabled>Войти в VR</button>
+      <button id="vrBtn" class="primary" disabled data-i18n="enterVR">Войти в VR</button>
       <div class="hint">
-        <b>На Quest 3:</b> откройте <span id="questUrl" class="mono"></span>
-        в браузере и примите предупреждение о сертификате.<br>
-        <b>В VR:</b> триггер контроллера — следующее фото,
-        кнопка сжатия (grip) — предыдущее.
+        <b data-i18n="questHintPrefix">На Quest 3 откройте</b> <span id="questUrl" class="mono"></span>
+        <span data-i18n="questHintSuffix">в браузере и примите предупреждение о сертификате.</span><br>
+        <b data-i18n="vrHintPrefix">В VR:</b> <span data-i18n="vrHint2D">триггер — следующее фото, grip — предыдущее.</span>
       </div>
     </aside>
   </main>

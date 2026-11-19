@@ -26,6 +26,8 @@ Open `config.json`:
   "port": 8443,
   "thumb_width": 320,
   "max_texture_size": 4096,
+  "language": "en",
+  "statefile": "state.json",
   "roots": [
     {
       "id": "sbs",
@@ -44,6 +46,8 @@ Open `config.json`:
 - `eye_aspect`: explicit aspect ratio of one eye; when `null`, it is derived from the image size.
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
 - You can add as many `roots` as you need, each with its own path and mode.
+- `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
+- `statefile` — where to keep saved settings (per-directory zoom and chosen language).
 
 ### 2. Generate a certificate
 
@@ -86,7 +90,7 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
 
    **Photo mode**
    - **Right thumbstick left/right** — previous/next photo (with repeat delay when held);
-   - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo);
+   - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo). The value is **saved separately for each source directory** and restored next time you enter VR;
    - **Trigger** — next photo, **grip/squeeze** — previous photo;
    - **Press the thumbstick** or the **B/Y** button — open the 3D gallery.
 
@@ -101,6 +105,28 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
    On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Enter` (open), `G` (switch mode) and `Escape` (exit VR).
 
    The hint panel under the photo and the gallery header show the current controls right in VR.
+
+### 5. Interface language
+
+Pick a language from the **Language** dropdown on the 2D page — it applies immediately both to the 2D interface and to the in-VR hints. The choice is saved.
+
+You can also set a default in `config.json` (`"language": "en"`). A language stored in the saved state takes priority over the config.
+
+Translations live in **separate JSON files** `web/i18n/<code>.json` — the optimal choice here: the server discovers every file automatically and exposes the list via `/api/i18n/list`, so adding a language takes **one new file, no code changes**.
+
+Each file is a flat key → string map. `__name` is the language name shown in the list; the other keys match `data-i18n` attributes in `web/index.html` and the strings drawn in VR. Strings support placeholders like `{name}`, `{zoom}`, `{index}`:
+
+```json
+{
+  "__name": "Deutsch",
+  "title": "VR Stereo-Galerie · Quest 3",
+  "vrLabelHint": "Stick ← → blättern · ↑ ↓ Zoom {zoom}× · Stick/B — Galerie"
+}
+```
+
+Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
+
+Saved settings (per-directory zoom and language) live in `state.json`, which is gitignored.
 
 ## Dependencies
 
@@ -117,6 +143,8 @@ tools/make_cert.py — self-signed certificate with IP SAN
 web/index.html     — 2D file browser and Enter VR button
 web/app.js         — SBS loading, WebGL rendering, WebXR session, input
 web/style.css
+web/i18n/*.json    — translation files (one file per language)
+state.json         — saved per-directory zoom and language (do not commit)
 cert/              — certificates (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 ```

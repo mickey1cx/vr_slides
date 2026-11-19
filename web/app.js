@@ -19,6 +19,11 @@ const STICK_REPEAT = 320; // мс между повторами при удер�
 
 const state = {
   config: null,
+  dict: {},
+  lang: 'ru',
+  langs: [],
+  zoomByRoot: {},
+  zoomSaveTimer: null,
   rootId: '',
   rel: '',
   entries: [],
@@ -35,6 +40,7 @@ const state = {
   texWhite: null,
   texHeader: null,
   texExit: null,
+  exitCanvas: null,
   texCards: [],
   blankCard: null,
   labelCanvas: null,
@@ -57,6 +63,54 @@ async function api(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+function t(key, vars = {}) {
+  let text = state.dict[key] || key;
+  for (const [name, value] of Object.entries(vars)) {
+    text = text.replaceAll(`{${name}}`, String(value));
+  }
+  return text;
+}
+
+async function saveState(payload) {
+  try {
+    await fetch('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* офлайн — сохранение пропускаем */ }
+}
+
+async function setLanguage(code, persist = true) {
+  const res = await fetch(`/i18n/${encodeURIComponent(code)}.json`);
+  if (!res.ok) throw new Error(`Language ${code} not found`);
+  state.dict = await res.json();
+  state.lang = code;
+  document.documentElement.lang = code;
+  applyTexts();
+  const selector = $('#langSelect');
+  if (selector) selector.value = code;
+  if (state.gl) {
+    if (state.current >= 0) updateLabel(state.entries[state.current]);
+    updateGalleryHeader();
+    uploadExitTexture(state.gl);
+  }
+  if (persist) await saveState({ lang: code });
+}
+
+function applyTexts() {
+  document.title = t('title');
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+  const preview = $('#preview');
+  if (preview && !preview.querySelector('img')) preview.textContent = t('chooseImage');
+  if (state.current >= 0) updateInfo(state.entries[state.current]);
 }
 
 function showError(err) {
@@ -94,8 +148,23 @@ async function loadImage(url) {
 }
 
 async function init() {
-  const cfg = await api('/api/config');
+  const [cfg, saved, langs] = await Promise.all([
+    api('/api/config'),
+    api('/api/state'),
+    api('/api/i18n/list'),
+  ]);
   state.config = cfg;
+  state.langs = langs;
+  state.zoomByRoot = saved.zoom || {};
+
+  const langSelect = $('#langSelect');
+  for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
+  langSelect.addEventListener('change', () => setLanguage(langSelect.value).catch(showError));
+
+  const has = (code) => langs.some((l) => l.code === code);
+  const initialLang = has(saved.lang) ? saved.lang : (has(cfg.language) ? cfg.language : (langs[0]?.code || 'ru'));
+  await setLanguage(initialLang, false);
+
   $('#url').textContent = location.origin;
   $('#questUrl').textContent = `https://${cfg.ip}:${cfg.port}`;
 
@@ -104,6 +173,7 @@ async function init() {
   sel.addEventListener('change', () => {
     state.rootId = sel.value;
     state.rel = '';
+    state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
     list().catch(showError);
   });
 
@@ -120,9 +190,10 @@ async function init() {
   if (cfg.roots.length) {
     state.rootId = cfg.roots[0].id;
     sel.value = state.rootId;
+    state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
     await list();
   } else {
-    showError('В config.json не указа ни одного каталога.');
+    showError(t('errNoRoots'));
   }
 }
 
@@ -177,8 +248,13 @@ function renderGrid() {
 
 function updateInfo(entry) {
   const rc = rootCfg();
-  $('#info').textContent =
-    `${entry.name}\n${entry.width || '?'}×${entry.height || '?'} · SBS ${rc.sbs} · ${state.images.length} фото`;
+  $('#info').textContent = t('info', {
+    name: entry.name,
+    width: entry.width || '?',
+    height: entry.height || '?',
+    sbs: rc.sbs,
+    count: state.images.length,
+  });
 }
 
 async function openImage(entry) {
@@ -323,19 +399,11 @@ function initGL(gl) {
   hctx.fillRect(0, 0, 1024, 128);
   uploadImage(gl, state.texHeader, state.headerCanvas);
 
-  const exitCanvas = document.createElement('canvas');
-  exitCanvas.width = 512;
-  exitCanvas.height = 96;
-  const ectx = exitCanvas.getContext('2d');
-  ectx.fillStyle = '#4a1d24';
-  ectx.fillRect(0, 0, 512, 96);
-  ectx.fillStyle = '#ffd7dc';
-  ectx.font = 'bold 40px sans-serif';
-  ectx.textAlign = 'center';
-  ectx.textBaseline = 'middle';
-  ectx.fillText('Выйти из VR', 256, 48);
+  state.exitCanvas = document.createElement('canvas');
+  state.exitCanvas.width = 512;
+  state.exitCanvas.height = 96;
   state.texExit = makeTexture(gl);
-  uploadImage(gl, state.texExit, exitCanvas);
+  uploadExitTexture(gl);
 
   const white = document.createElement('canvas');
   white.width = white.height = 2;
@@ -359,6 +427,20 @@ function initGL(gl) {
   }
 
   gl.disable(gl.DEPTH_TEST);
+}
+
+function uploadExitTexture(gl) {
+  const canvas = state.exitCanvas;
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#4a1d24';
+  ctx.fillRect(0, 0, 512, 96);
+  ctx.fillStyle = '#ffd7dc';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(t('exitVR'), 256, 48);
+  uploadImage(gl, state.texExit, canvas);
 }
 
 function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1]) {
@@ -385,18 +467,22 @@ function updateLabel(entry) {
   ctx.fillText(`${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '22px sans-serif';
-  ctx.fillText(
-    `стик ← → листать · ↑ ↓ зум ${state.zoom.toFixed(1)}× · нажать стик/B — галерея`,
-    16, 142,
-  );
+  ctx.fillText(t('vrLabelHint', { zoom: state.zoom.toFixed(1) }), 16, 142);
   uploadImage(state.gl, state.texLabel, canvas);
 }
 
 function zoomBy(direction) {
   const factor = direction < 0 ? 1.12 : 1 / 1.12; // вверх — приблизить
-  state.zoom = Math.min(2.5, Math.max(0.6, state.zoom * factor));
+  state.zoom = Math.round(Math.min(2.5, Math.max(0.6, state.zoom * factor)) * 1000) / 1000;
+  state.zoomByRoot[state.rootId] = state.zoom;
   const entry = state.entries[state.current];
   if (entry && state.gl) updateLabel(entry);
+
+  // Сохраняем на сервер не чаще одного раза в 500 мс, чтобы не дёргать диск при удержании стика.
+  clearTimeout(state.zoomSaveTimer);
+  state.zoomSaveTimer = setTimeout(() => {
+    saveState({ zoom: state.zoom, root: state.rootId }).catch(() => {});
+  }, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +491,7 @@ function zoomBy(direction) {
 
 function buildGalleryEntries(entries, rel) {
   const hasParent = rel.split('/').filter(Boolean).length > 0;
-  const up = hasParent ? [{ type: 'up', name: '↑ Назад', path: '' }] : [];
+  const up = hasParent ? [{ type: 'up', name: t('up'), path: '' }] : [];
   return [...up, ...entries];
 }
 
@@ -513,13 +599,13 @@ function updateGalleryHeader() {
   ctx.font = '36px sans-serif';
   ctx.textBaseline = 'middle';
   const where = `${rootCfg().name || ''}/${g.rel || ''}`;
-  ctx.fillText(`Галерея · ${where}`.slice(0, 44), 16, 44);
+  ctx.fillText(t('galleryTitle', { where }).slice(0, 44), 16, 44);
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '26px sans-serif';
-  ctx.fillText(
-    `${g.entries.length ? g.cursor + 1 : 0}/${g.entries.length} · стик: выбор · триггер: открыть · B/стик: фото`,
-    16, 96,
-  );
+  ctx.fillText(t('galleryHint', {
+    index: g.entries.length ? g.cursor + 1 : 0,
+    total: g.entries.length,
+  }), 16, 96);
   uploadImage(state.gl, state.texHeader, state.headerCanvas);
 }
 
@@ -872,21 +958,21 @@ function onFrame(time, frame) {
 
 async function enterVR() {
   if (!navigator.xr) {
-    throw new Error('WebXR недоступен. Откройте страницу в Quest Browser по HTTPS.');
+    throw new Error(t('errNoWebXR'));
   }
   if (!(await navigator.xr.isSessionSupported('immersive-vr'))) {
-    throw new Error('Этот браузер не поддерживает immersive-vr.');
+    throw new Error(t('errNoImmersive'));
   }
 
   const session = await navigator.xr.requestSession('immersive-vr');
   state.session = session;
-  state.zoom = 1.0;
+  state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
 
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
   if (!gl) {
     await session.end();
-    throw new Error('WebGL недоступен.');
+    throw new Error(t('errNoWebGL'));
   }
   await gl.makeXRCompatible();
   state.gl = gl;
@@ -923,7 +1009,7 @@ async function enterVR() {
 
   if (state.current < 0) {
     await session.end();
-    throw new Error('Сначала выберите изображение.');
+    throw new Error(t('errNoImage'));
   }
   await loadPhoto(state.entries[state.current]);
   session.requestAnimationFrame(onFrame, state.refSpace);
