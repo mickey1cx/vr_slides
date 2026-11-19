@@ -6,6 +6,8 @@
   "keyfile": "cert/key.pem",
   "thumb_width": 320,
   "max_texture_size": 4096,
+  "language": "ru",
+  "statefile": "state.json",
   "roots": [
     {
       "id": "demo",

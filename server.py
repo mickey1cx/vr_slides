@@ -10,9 +10,11 @@ import hashlib
 import io
 import json
 import mimetypes
+import re
 import socket
 import ssl
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -31,6 +33,9 @@ except ImportError:  # Pillow не обязателен
     RESAMPLE = None
 
 CONFIG: dict = {}
+STATE: dict = {"zoom": {}, "lang": None}
+STATE_LOCK = threading.Lock()
+STATE_PATH: Path = BASE_DIR / "state.json"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +51,8 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("ip", None)
     cfg.setdefault("thumb_width", 320)
     cfg.setdefault("max_texture_size", 4096)
+    cfg.setdefault("language", "ru")
+    cfg.setdefault("statefile", "state.json")
     cfg.setdefault("roots", [])
     return cfg
 
@@ -168,6 +175,7 @@ def config_payload() -> dict:
         "ip": CONFIG.get("ip") or local_ip(),
         "port": CONFIG["port"],
         "secure": True,
+        "language": CONFIG["language"],
         "maxTextureSize": CONFIG["max_texture_size"],
         "roots": [
             {
@@ -181,6 +189,51 @@ def config_payload() -> dict:
             for r in CONFIG["roots"]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Состояние (зум по каталогам, выбранный язык)
+# ---------------------------------------------------------------------------
+
+def load_state() -> None:
+    global STATE_PATH, STATE
+    p = Path(CONFIG["statefile"])
+    STATE_PATH = p if p.is_absolute() else BASE_DIR / p
+    if STATE_PATH.is_file():
+        try:
+            data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                STATE = {
+                    "zoom": data.get("zoom", {}) if isinstance(data.get("zoom"), dict) else {},
+                    "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
+                }
+            return
+        except (OSError, ValueError):
+            pass
+    STATE = {"zoom": {}, "lang": None}
+
+
+def save_state() -> None:
+    tmp = STATE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(STATE, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(STATE_PATH)
+
+
+def available_languages() -> list:
+    result = []
+    i18n_dir = WEB_DIR / "i18n"
+    for path in sorted(i18n_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("__name"):
+            result.append({"code": path.stem, "name": data["__name"]})
+    return result
+
+
+def valid_language(code: str) -> bool:
+    return bool(re.fullmatch(r"[a-zA-Z0-9_-]+", code)) and (WEB_DIR / "i18n" / f"{code}.json").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +252,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(WEB_DIR / "index.html")
             if path in ("/app.js", "/style.css"):
                 return self._file(WEB_DIR / path.lstrip("/"))
+            if path.startswith("/i18n/"):
+                name = path[len("/i18n/"):]
+                if not re.fullmatch(r"[a-zA-Z0-9_-]+\.json", name):
+                    raise ValueError("Некорректный файл локализации")
+                return self._file(WEB_DIR / "i18n" / name)
             if path == "/api/config":
                 return self._json(config_payload())
+            if path == "/api/state":
+                with STATE_LOCK:
+                    return self._json(STATE)
+            if path == "/api/i18n/list":
+                return self._json(available_languages())
             if path == "/api/list":
                 root = get_root(query.get("root", [""])[0])
                 return self._json(list_dir(root, query.get("path", [""])[0]))
@@ -220,6 +283,38 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, FileNotFoundError, KeyError, IndexError) as exc:
             return self._error(400, str(exc))
         except Exception as exc:  # noqa: BLE001 - отдаём ошибку в браузер
+            return self._error(500, f"{type(exc).__name__}: {exc}")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/state":
+            return self._error(404, "Не найдено")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(max(0, length)).decode("utf-8") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("Ожидается JSON-объект")
+            with STATE_LOCK:
+                changed = False
+                if "zoom" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешён
+                    zoom = float(payload["zoom"])
+                    zoom = min(2.5, max(0.6, zoom))
+                    STATE.setdefault("zoom", {})[root_id] = round(zoom, 3)
+                    changed = True
+                if "lang" in payload:
+                    lang = str(payload["lang"])
+                    if not valid_language(lang):
+                        raise ValueError("Неизвестный язык")
+                    STATE["lang"] = lang
+                    changed = True
+                if changed:
+                    save_state()
+                return self._json(STATE)
+        except (ValueError, KeyError, TypeError) as exc:
+            return self._error(400, str(exc))
+        except Exception as exc:  # noqa: BLE001
             return self._error(500, f"{type(exc).__name__}: {exc}")
 
     def _file(self, path: Path):
@@ -264,6 +359,7 @@ def main():
     global CONFIG
     CONFIG = load_config(Path(args.config))
     THUMB_DIR.mkdir(exist_ok=True)
+    load_state()
 
     for root in CONFIG["roots"]:
         p = root_base(root)
