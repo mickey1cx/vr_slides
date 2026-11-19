@@ -9,6 +9,11 @@ const CARD_H = 0.35;
 const GAP_X = 0.62;
 const GAP_Y = 0.46;
 const GALLERY_Z = -2.2;
+const EXIT_Y = -0.92;
+const BAR_X = 1.42;
+const BAR_TOP = 0.72;
+const BAR_HEIGHT = 1.44;
+const BAR_WIDTH = 0.035;
 const STICK_DEAD = 0.6;
 const STICK_REPEAT = 320; // мс между повторами при удержании
 
@@ -29,6 +34,7 @@ const state = {
   texLabel: null,
   texWhite: null,
   texHeader: null,
+  texExit: null,
   texCards: [],
   blankCard: null,
   labelCanvas: null,
@@ -40,7 +46,7 @@ const state = {
   zoom: 1.0,
   axis: { x: 0, y: 0, last: 0 },
   buttons: { stick: false, b: false },
-  gallery: { rel: '', entries: [], cursor: 0, page: 0, gen: 0 },
+  gallery: { rel: '', entries: [], cursor: 0, offset: 0, gen: 0, ray: null, hover: -1, exitHover: false },
 };
 
 // ---------------------------------------------------------------------------
@@ -317,6 +323,20 @@ function initGL(gl) {
   hctx.fillRect(0, 0, 1024, 128);
   uploadImage(gl, state.texHeader, state.headerCanvas);
 
+  const exitCanvas = document.createElement('canvas');
+  exitCanvas.width = 512;
+  exitCanvas.height = 96;
+  const ectx = exitCanvas.getContext('2d');
+  ectx.fillStyle = '#4a1d24';
+  ectx.fillRect(0, 0, 512, 96);
+  ectx.fillStyle = '#ffd7dc';
+  ectx.font = 'bold 40px sans-serif';
+  ectx.textAlign = 'center';
+  ectx.textBaseline = 'middle';
+  ectx.fillText('Выйти из VR', 256, 48);
+  state.texExit = makeTexture(gl);
+  uploadImage(gl, state.texExit, exitCanvas);
+
   const white = document.createElement('canvas');
   white.width = white.height = 2;
   const wctx = white.getContext('2d');
@@ -389,9 +409,35 @@ function buildGalleryEntries(entries, rel) {
   return [...up, ...entries];
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function setCursor(index) {
+  const g = state.gallery;
+  if (!g.entries.length) return;
+  const next = clamp(index, 0, g.entries.length - 1);
+  const changed = next !== g.cursor;
+  g.cursor = next;
+
+  const maxOffset = Math.max(0, g.entries.length - SLOTS);
+  let offset = g.offset;
+  if (g.cursor < offset) offset = g.cursor;
+  if (g.cursor >= offset + SLOTS) offset = g.cursor - SLOTS + 1;
+  offset = clamp(offset, 0, maxOffset);
+  if (offset !== g.offset) {
+    g.offset = offset;
+    loadGalleryPage();
+  }
+  if (changed) updateGalleryHeader();
+}
+
 function toggleGallery() {
   if (state.mode === 'gallery') {
     state.mode = 'photo';
+    state.gallery.ray = null;
+    state.gallery.hover = -1;
+    state.gallery.exitHover = false;
     if (state.current >= 0) updateLabel(state.entries[state.current]);
     return;
   }
@@ -401,22 +447,17 @@ function toggleGallery() {
   const currentEntry = state.entries[state.current];
   const idx = g.entries.findIndex((e) => e.type === 'image' && e === currentEntry);
   g.cursor = idx >= 0 ? idx : 0;
-  g.page = Math.floor(g.cursor / SLOTS);
+  g.offset = clamp(g.cursor - Math.floor(SLOTS / 2), 0, Math.max(0, g.entries.length - SLOTS));
+  g.ray = null;
+  g.hover = -1;
+  g.exitHover = false;
   state.mode = 'gallery';
   loadGalleryPage();
   updateGalleryHeader();
 }
 
 function moveCursor(delta) {
-  const g = state.gallery;
-  if (!g.entries.length) return;
-  g.cursor = (g.cursor + delta + g.entries.length) % g.entries.length;
-  const page = Math.floor(g.cursor / SLOTS);
-  if (page !== g.page) {
-    g.page = page;
-    loadGalleryPage();
-  }
-  updateGalleryHeader();
+  setCursor(state.gallery.cursor + delta);
 }
 
 async function makeCardCanvas(entry) {
@@ -436,10 +477,10 @@ async function makeCardCanvas(entry) {
     ctx.fillText(entry.type === 'dir' ? '📁' : '↩', 256, 128);
   }
   ctx.fillStyle = '#e7eaf0';
-  ctx.font = '20px sans-serif';
+  ctx.font = '26px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(entry.name.slice(0, 42), 10, 298);
+  ctx.fillText(entry.name.slice(0, 34), 10, 300);
   return c;
 }
 
@@ -447,7 +488,7 @@ async function loadGalleryPage() {
   if (!state.gl) return;
   const g = state.gallery;
   const gen = ++g.gen;
-  const start = g.page * SLOTS;
+  const start = g.offset;
   for (let slot = 0; slot < SLOTS; slot++) {
     const entry = g.entries[start + slot];
     if (!entry) {
@@ -469,22 +510,22 @@ function updateGalleryHeader() {
   ctx.fillStyle = '#10131a';
   ctx.fillRect(0, 0, 1024, 128);
   ctx.fillStyle = '#ffffff';
-  ctx.font = '30px sans-serif';
+  ctx.font = '36px sans-serif';
   ctx.textBaseline = 'middle';
   const where = `${rootCfg().name || ''}/${g.rel || ''}`;
-  ctx.fillText(`Галерея · ${where}`.slice(0, 52), 16, 44);
+  ctx.fillText(`Галерея · ${where}`.slice(0, 44), 16, 44);
   ctx.fillStyle = '#9aa3b5';
-  ctx.font = '22px sans-serif';
+  ctx.font = '26px sans-serif';
   ctx.fillText(
-    `${g.entries.length ? g.cursor + 1 : 0}/${g.entries.length} · стик: выбор · триггер: открыть · нажать стик/B: фото`,
+    `${g.entries.length ? g.cursor + 1 : 0}/${g.entries.length} · стик: выбор · триггер: открыть · B/стик: фото`,
     16, 96,
   );
   uploadImage(state.gl, state.texHeader, state.headerCanvas);
 }
 
-async function openGallerySelection() {
+async function openGallerySelection(index = state.gallery.cursor) {
   const g = state.gallery;
-  const entry = g.entries[g.cursor];
+  const entry = g.entries[index];
   if (!entry) return;
   if (entry.type === 'up') {
     const parts = g.rel.split('/').filter(Boolean);
@@ -503,7 +544,10 @@ async function openGallerySelection() {
   const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(g.rel)}`);
   g.entries = buildGalleryEntries(data.entries, g.rel);
   g.cursor = 0;
-  g.page = 0;
+  g.offset = 0;
+  g.ray = null;
+  g.hover = -1;
+  g.exitHover = false;
   loadGalleryPage();
   updateGalleryHeader();
 }
@@ -511,7 +555,7 @@ async function openGallerySelection() {
 function renderGallery(gl, proj, viewM) {
   const g = state.gallery;
   for (let slot = 0; slot < SLOTS; slot++) {
-    const idx = g.page * SLOTS + slot;
+    const idx = g.offset + slot;
     const entry = g.entries[idx];
     if (!entry) break;
     const col = slot % COLS;
@@ -519,20 +563,49 @@ function renderGallery(gl, proj, viewM) {
     const x = (col - (COLS - 1) / 2) * GAP_X;
     const y = ((ROWS - 1) / 2 - row) * GAP_Y;
 
-    if (idx === g.cursor) {
+    if (idx === g.cursor || idx === g.hover) {
+      const hovered = idx === g.hover && idx !== g.cursor;
       const hm = multiply(
         translate(x, y, GALLERY_Z - 0.02),
         scale(CARD_W + 0.055, CARD_H + 0.055, 1),
       );
-      draw(gl, state.texWhite, multiply(proj, multiply(viewM, hm)), [0, 0], [1, 1], [0.2, 0.55, 1.0]);
+      draw(
+        gl, state.texWhite, multiply(proj, multiply(viewM, hm)), [0, 0], [1, 1],
+        hovered ? [0.5, 0.9, 1.0] : [0.2, 0.55, 1.0],
+      );
     }
 
     const model = multiply(translate(x, y, GALLERY_Z), scale(CARD_W, CARD_H, 1));
     draw(gl, state.texCards[slot], multiply(proj, multiply(viewM, model)), [0, 0], [1, 1]);
   }
 
-  const hm = multiply(translate(0, 0.92, GALLERY_Z), scale(1.8, 0.225, 1));
-  draw(gl, state.texHeader, multiply(proj, multiply(viewM, hm)), [0, 0], [1, 1]);
+  const count = g.entries.length;
+  const track = multiply(translate(BAR_X, 0, GALLERY_Z), scale(BAR_WIDTH, BAR_HEIGHT, 1));
+  draw(gl, state.texWhite, multiply(proj, multiply(viewM, track)), [0, 0], [1, 1], [0.12, 0.14, 0.2]);
+
+  const thumbH = Math.max(0.16, count > SLOTS ? BAR_HEIGHT * SLOTS / count : BAR_HEIGHT);
+  const travel = BAR_HEIGHT - thumbH;
+  const frac = count > SLOTS ? g.offset / (count - SLOTS) : 0;
+  const thumbY = BAR_TOP - thumbH / 2 - frac * travel;
+  const thumb = multiply(
+    translate(BAR_X, thumbY, GALLERY_Z - 0.01),
+    scale(BAR_WIDTH * 1.8, thumbH, 1),
+  );
+  draw(gl, state.texWhite, multiply(proj, multiply(viewM, thumb)), [0, 0], [1, 1], [0.25, 0.6, 1.0]);
+
+  const exitModel = multiply(translate(0, EXIT_Y, GALLERY_Z), scale(0.9, 0.17, 1));
+  draw(
+    gl, state.texExit, multiply(proj, multiply(viewM, exitModel)), [0, 0], [1, 1],
+    g.exitHover ? [1.4, 1.1, 1.1] : [1, 1, 1],
+  );
+
+  const headerModel = multiply(translate(0, 0.92, GALLERY_Z), scale(1.8, 0.225, 1));
+  draw(gl, state.texHeader, multiply(proj, multiply(viewM, headerModel)), [0, 0], [1, 1]);
+
+  if (g.ray) {
+    const beam = beamModel(g.ray.origin, g.ray.point);
+    draw(gl, state.texWhite, multiply(proj, multiply(viewM, beam)), [0, 0], [1, 1], [0.25, 0.7, 1.0]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -567,18 +640,108 @@ function scale(x, y, z) {
 }
 
 // ---------------------------------------------------------------------------
+// Луч правого контроллера (только для галереи)
+// ---------------------------------------------------------------------------
+
+function cross(a, b) {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+function rotateByQuat(v, q) {
+  const qv = { x: q.x, y: q.y, z: q.z };
+  const uv = cross(qv, v);
+  const uuv = cross(qv, uv);
+  return {
+    x: v.x + 2 * (q.w * uv.x + uuv.x),
+    y: v.y + 2 * (q.w * uv.y + uuv.y),
+    z: v.z + 2 * (q.w * uv.z + uuv.z),
+  };
+}
+
+function beamModel(origin, end) {
+  const dx = end.x - origin.x;
+  const dy = end.y - origin.y;
+  const dz = end.z - origin.z;
+  const len = Math.hypot(dx, dy, dz) || 0.001;
+  const forward = { x: dx / len, y: dy / len, z: dz / len };
+  const hint = Math.abs(forward.y) > 0.95 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
+  const right = cross(forward, hint);
+  const rLen = Math.hypot(right.x, right.y, right.z) || 1;
+  right.x /= rLen; right.y /= rLen; right.z /= rLen;
+  const up = cross(right, forward);
+  const width = 0.006;
+
+  const m = new Float32Array(16);
+  m[0] = right.x * width; m[1] = right.y * width; m[2] = right.z * width;
+  m[4] = forward.x * len; m[5] = forward.y * len; m[6] = forward.z * len;
+  m[8] = up.x * width; m[9] = up.y * width; m[10] = up.z * width;
+  m[12] = (origin.x + end.x) / 2;
+  m[13] = (origin.y + end.y) / 2;
+  m[14] = (origin.z + end.z) / 2;
+  m[15] = 1;
+  return m;
+}
+
+function computeRay(frame, refSpace, source) {
+  if (state.mode !== 'gallery' || !source || !source.targetRaySpace) return null;
+  const pose = frame.getPose(source.targetRaySpace, refSpace);
+  if (!pose) return null;
+
+  const origin = pose.transform.position;
+  const dir = rotateByQuat({ x: 0, y: 0, z: -1 }, pose.transform.orientation);
+  const ray = { origin, dir, point: null, index: -1, exit: false };
+
+  if (Math.abs(dir.z) > 1e-4) {
+    const t = (GALLERY_Z - origin.z) / dir.z;
+    if (t > 0) {
+      const x = origin.x + dir.x * t;
+      const y = origin.y + dir.y * t;
+      ray.point = { x, y, z: GALLERY_Z };
+
+      if (Math.abs(x) <= 0.45 && Math.abs(y - EXIT_Y) <= 0.085) {
+        ray.exit = true;
+      } else {
+        const g = state.gallery;
+        for (let slot = 0; slot < SLOTS; slot++) {
+          const col = slot % COLS;
+          const row = Math.floor(slot / COLS);
+          const cx = (col - (COLS - 1) / 2) * GAP_X;
+          const cy = ((ROWS - 1) / 2 - row) * GAP_Y;
+          if (Math.abs(x - cx) <= CARD_W / 2 && Math.abs(y - cy) <= CARD_H / 2) {
+            ray.index = g.offset + slot;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (!ray.point) {
+    ray.point = {
+      x: origin.x + dir.x * 2.5,
+      y: origin.y + dir.y * 2.5,
+      z: origin.z + dir.z * 2.5,
+    };
+  }
+  return ray;
+}
+
+// ---------------------------------------------------------------------------
 // Ввод
 // ---------------------------------------------------------------------------
 
-function rightGamepad(session) {
+function rightInputSource(session) {
   for (const src of Array.from(session.inputSources || [])) {
-    if (src.handedness === 'right' && src.gamepad) return src.gamepad;
+    if (src.handedness === 'right') return src;
   }
   return null;
 }
 
-function handleInput(session, time) {
-  const pad = rightGamepad(session);
+function handleInput(pad, time) {
   let dx = 0;
   let dy = 0;
   let stickPressed = false;
@@ -625,6 +788,10 @@ function handleInput(session, time) {
 }
 
 function onKey(e) {
+  if (e.key === 'Escape' && state.session) {
+    state.session.end();
+    return;
+  }
   if (e.key === 'g' || e.key === 'G') {
     toggleGallery();
     return;
@@ -651,7 +818,15 @@ function onFrame(time, frame) {
   const session = frame.session;
   const refSpace = state.refSpace;
   const pose = frame.getViewerPose(refSpace);
-  handleInput(session, time);
+  const source = rightInputSource(session);
+  handleInput(source && source.gamepad, time);
+
+  const ray = computeRay(frame, refSpace, source);
+  const g = state.gallery;
+  g.ray = ray;
+  g.hover = ray && ray.index >= 0 && ray.index < g.entries.length ? ray.index : -1;
+  g.exitHover = !!(ray && ray.exit);
+
   if (!pose) {
     session.requestAnimationFrame(onFrame, refSpace);
     return;
@@ -720,8 +895,16 @@ async function enterVR() {
   state.refSpace = await session.requestReferenceSpace('local');
 
   session.addEventListener('select', () => {
-    if (state.mode === 'gallery') openGallerySelection().catch(showError);
-    else step(1);
+    if (state.mode !== 'gallery') {
+      step(1);
+      return;
+    }
+    if (state.gallery.exitHover && state.session) {
+      state.session.end();
+      return;
+    }
+    const target = state.gallery.hover >= 0 ? state.gallery.hover : state.gallery.cursor;
+    openGallerySelection(target).catch(showError);
   });
   session.addEventListener('squeeze', () => {
     if (state.mode === 'gallery') toggleGallery();
@@ -732,6 +915,9 @@ async function enterVR() {
     state.gl = null;
     state.refSpace = null;
     state.mode = 'photo';
+    state.gallery.ray = null;
+    state.gallery.hover = -1;
+    state.gallery.exitHover = false;
     $('#vrBtn').disabled = state.current < 0;
   });
 
