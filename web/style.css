@@ -49,6 +49,17 @@ button, select {
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: default; }
 
+a.qr-link {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #202638;
+  color: var(--text);
+  text-decoration: none;
+}
+a.qr-link:hover { border-color: var(--accent); }
+a.qr-link[hidden] { display: none; }
+
 button.primary {
   width: 100%;
   margin-top: 12px;

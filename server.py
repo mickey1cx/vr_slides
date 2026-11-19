@@ -38,6 +38,11 @@ try:
 except ImportError:  # опционально: Windows использует ctypes, Linux/macOS — жёсткое удаление
     _send2trash = None
 
+try:
+    import segno  # опционально: QR-код со ссылкой для Quest 3
+except ImportError:
+    segno = None
+
 if sys.platform == "win32":
     from ctypes import wintypes
 
@@ -57,6 +62,7 @@ CONFIG: dict = {}
 STATE: dict = {"zoom": {}, "curve": {}, "view": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
+QR_PNG: bytes | None = None
 
 # Предпочтительный способ удаления в корзину в текущем окружении.
 TRASH_MODE = "send2trash" if _send2trash else ("windows" if sys.platform == "win32" else "none")
@@ -77,6 +83,8 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("max_texture_size", 4096)
     cfg.setdefault("language", "ru")
     cfg.setdefault("statefile", "state.json")
+    cfg.setdefault("qr", True)
+    cfg.setdefault("qrfile", "cert/connect.png")
     cfg.setdefault("delete_to_trash", True)
     cfg.setdefault("roots", [])
     return cfg
@@ -91,6 +99,32 @@ def local_ip() -> str:
         return ip
     except OSError:
         return socket.gethostname()
+
+
+def connection_url(http: bool = False) -> str:
+    """Адрес, который нужно открыть в Quest Browser."""
+    scheme = "http" if http else "https"
+    host = CONFIG.get("ip") or local_ip()
+    return f"{scheme}://{host}:{CONFIG['port']}"
+
+
+def make_qr_png(url: str, path: Path) -> bytes | None:
+    """Сохраняет QR в PNG и возвращает его байты. Без segno — только URL в консоли."""
+    global QR_PNG
+    if segno is None:
+        return None
+    try:
+        qr = segno.make(url, error="m", boost_error=False)
+        buf = io.BytesIO()
+        qr.save(buf, kind="png", scale=8, border=4, dark="#10131a", light="#ffffff")
+        data = buf.getvalue()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        QR_PNG = data
+        return data
+    except Exception as exc:  # noqa: BLE001 - QR не должен мешать запуску сервера
+        print(f"[ВНИМАНИЕ] Не удалось создать QR: {exc}", file=sys.stderr)
+        return None
 
 
 def get_root(root_id: str) -> dict:
@@ -257,6 +291,7 @@ def config_payload() -> dict:
         "ip": CONFIG.get("ip") or local_ip(),
         "port": CONFIG["port"],
         "secure": True,
+        "qr": QR_PNG is not None,
         "language": CONFIG["language"],
         "maxTextureSize": CONFIG["max_texture_size"],
         "trash": bool(CONFIG.get("delete_to_trash", True) and TRASH_MODE != "none"),
@@ -384,6 +419,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[a-zA-Z0-9_-]+\.json", name):
                     raise ValueError("Некорректный файл локализации")
                 return self._file(WEB_DIR / "i18n" / name)
+            if path in ("/qr", "/qr.png"):
+                if QR_PNG is None:
+                    raise ValueError("QR-код не создан. Установите: pip install segno")
+                return self._bytes(QR_PNG, "image/png", cache=0)
             if path == "/api/config":
                 return self._json(config_payload())
             if path == "/api/state":
@@ -518,6 +557,7 @@ def main():
     parser = argparse.ArgumentParser(description="VR стерео-галерея для Quest 3")
     parser.add_argument("--config", default=str(BASE_DIR / "config.json"))
     parser.add_argument("--http", action="store_true", help="без TLS (только localhost)")
+    parser.add_argument("--no-qr", action="store_true", help="не создавать QR-код при запуске")
     args = parser.parse_args()
 
     global CONFIG
@@ -541,8 +581,16 @@ def main():
         ctx.load_cert_chain(str(cert), str(key))
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
 
-    url = f"https://{CONFIG.get('ip') or local_ip()}:{CONFIG['port']}"
+    url = connection_url(args.http)
     print(f"Откройте на Quest 3: {url}")
+    if CONFIG.get("qr", True) and not args.no_qr:
+        qr_path = BASE_DIR / CONFIG["qrfile"]
+        if make_qr_png(url, qr_path):
+            print(f"QR-код: {qr_path}  (или {url}/qr)")
+        else:
+            print("[QR] Для генерации установите: pip install segno", file=sys.stderr)
+    if args.http:
+        print("[ВНИМАНИЕ] --http: для Quest 3 нужен HTTPS, иначе WebXR не запустится.", file=sys.stderr)
     print("Ctrl+C для остановки.")
     try:
         httpd.serve_forever()
