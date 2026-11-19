@@ -105,7 +105,7 @@ main {
 }
 .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .card .pick {
-  display: none;
+  display: grid;
   position: absolute;
   top: 14px;
   right: 14px;
@@ -113,16 +113,24 @@ main {
   height: 28px;
   place-items: center;
   border-radius: 50%;
-  background: #ffd34d;
-  color: #201a00;
+  background: #232936;
+  color: #aab3c4;
+  border: 1px solid #6d7789;
   font-weight: 700;
   font-size: 17px;
   line-height: 1;
   box-shadow: 0 1px 6px #000a;
   cursor: pointer;
+  opacity: 0.75;
 }
-.card.picked .pick { display: grid; }
+.card:hover .pick { opacity: 1; }
+.card.picked .pick {
+  background: #ffd34d;
+  color: #201a00;
+  border-color: #ffd34d;
+}
 .card.picked { border-color: #ffd34d; }
+#markBtn.picked { border-color: #ffd34d; color: #ffe08a; }
 .card .thumb {
   width: 100%;
   aspect-ratio: 2 / 1;

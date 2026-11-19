@@ -67,6 +67,8 @@ const state = {
   exitCanvas: null,
   texDelete: null,
   deleteCanvas: null,
+  texMark: null,
+  markCanvas: null,
   texCards: [],
   blankCard: null,
   labelCanvas: null,
@@ -237,6 +239,7 @@ async function init() {
   $('#firstBtn').addEventListener('click', () => jumpToEdge(-1));
   $('#lastBtn').addEventListener('click', () => jumpToEdge(1));
   $('#deleteBtn').addEventListener('click', () => deleteSelected().catch(showError));
+  $('#markBtn').addEventListener('click', () => markCurrentOrHovered());
 
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));
@@ -299,7 +302,7 @@ function renderGrid() {
       thumb.src = thumbUrl(entry);
       const badge = document.createElement('span');
       badge.className = 'pick';
-      badge.textContent = '✓';
+      badge.textContent = state.selected.has(entry.path) ? '✓' : '+';
       badge.title = t('markTitle');
       badge.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -325,8 +328,18 @@ function updateSelectionUI() {
     button.disabled = count === 0;
   }
   document.querySelectorAll('#grid .card').forEach((card) => {
-    card.classList.toggle('picked', state.selected.has(card.dataset.path));
+    const marked = state.selected.has(card.dataset.path);
+    card.classList.toggle('picked', marked);
+    const badge = card.querySelector('.pick');
+    if (badge) badge.textContent = marked ? '✓' : '+';
   });
+  const markBtn = $('#markBtn');
+  if (markBtn) {
+    const entry = state.entries[state.current];
+    const marked = !!(entry && state.selected.has(entry.path));
+    markBtn.disabled = !entry || entry.type !== 'image';
+    markBtn.classList.toggle('picked', marked);
+  }
   if (state.gl) {
     uploadDeleteTexture(state.gl);
     updateGalleryHeader();
@@ -344,6 +357,9 @@ function toggleMark(entry) {
   if (state.selected.has(entry.path)) state.selected.delete(entry.path);
   else state.selected.add(entry.path);
   updateSelectionUI();
+  if (state.gl && state.mode === 'photo' && state.current >= 0) {
+    updateLabel(state.entries[state.current]);
+  }
   if (state.mode === 'gallery') loadGalleryPage();
 }
 
@@ -454,6 +470,7 @@ async function openImage(entry) {
   preview.append(img);
   updateInfo(entry);
   $('#vrBtn').disabled = false;
+  updateSelectionUI();
   await loadPhoto(entry);
 }
 
@@ -602,6 +619,11 @@ function initGL(gl) {
   }
   uploadNavButtons(gl);
 
+  state.markCanvas = document.createElement('canvas');
+  state.markCanvas.width = state.markCanvas.height = 96;
+  state.texMark = makeTexture(gl);
+  uploadMarkTexture(gl);
+
   const white = document.createElement('canvas');
   white.width = white.height = 2;
   const wctx = white.getContext('2d');
@@ -666,6 +688,23 @@ function uploadDeleteTexture(gl) {
   uploadImage(gl, tex, canvas);
 }
 
+function uploadMarkTexture(gl) {
+  const canvas = state.markCanvas;
+  const tex = state.texMark;
+  if (!canvas || !tex) return;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffd34d';
+  ctx.beginPath();
+  ctx.arc(48, 48, 44, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#201a00';
+  ctx.font = 'bold 60px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✓', 48, 51);
+  uploadImage(gl, tex, canvas);
+}
+
 function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4) {
   gl.useProgram(state.program);
   gl.activeTexture(gl.TEXTURE0);
@@ -681,6 +720,23 @@ function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, 
   gl.uniform3fv(state.loc.uTint, tint);
   gl.uniform1i(state.loc.uTex, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, count);
+}
+
+function drawPhotoMark(gl, proj, viewM) {
+  const entry = state.entries[state.current];
+  if (!entry || !state.selected.has(entry.path)) return;
+  const halfW = (state.height * state.aspect) / 2;
+  const z = state.distance / state.zoom;
+  const halfH = state.height / 2;
+  const s = 0.945; // чуть левее правого края, чтобы не срезалось при изгибе
+  const xFlat = (s - 0.5) * 2 * halfW;
+  const angle = Math.atan2(xFlat, z);
+  const xCurved = z * Math.sin(angle);
+  const zCurved = -z * Math.cos(angle);
+  const x = xFlat + (xCurved - xFlat) * state.curve;
+  const depth = -z + (zCurved + z) * state.curve - 0.01;
+  const model = multiply(translate(x, halfH - 0.11, depth), scale(0.11, 0.11, 1));
+  draw(gl, state.texMark, multiply(proj, multiply(viewM, model)), [0, 0], [1, 1]);
 }
 
 function drawCurvedPhoto(gl, proj, viewM, uvOffset, uvScale) {
@@ -717,11 +773,12 @@ function updateLabel(entry) {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#10131a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#ffffff';
+  const marked = !!(entry && state.selected.has(entry.path));
+  ctx.fillStyle = marked ? '#ffd34d' : '#ffffff';
   ctx.font = '28px sans-serif';
   ctx.textBaseline = 'middle';
   const index = state.images.indexOf(entry) + 1;
-  ctx.fillText(`${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
+  ctx.fillText(`${marked ? '✓ ' : ''}${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '22px sans-serif';
   ctx.fillText(t('vrLabelHint', {
@@ -1231,7 +1288,7 @@ function onKey(e) {
     toggleGallery();
     return;
   }
-  if (e.key === 'm' || e.key === 'M') {
+  if (e.key === 'm' || e.key === 'M' || e.key === 'a' || e.key === 'A') {
     markCurrentOrHovered(true);
     return;
   }
@@ -1304,6 +1361,7 @@ function onFrame(time, frame) {
     const z = state.distance / state.zoom;
     const right = view.eye === 'right';
     drawCurvedPhoto(gl, proj, viewM, right ? [0.5, 0] : [0, 0], [0.5, 1]);
+    drawPhotoMark(gl, proj, viewM);
 
     const labelModel = multiply(
       translate(0, -state.height / 2 - 0.2, -z),
@@ -1377,6 +1435,7 @@ async function enterVR() {
     state.gallery.deleteArmed = false;
     state.buttons = { stick: false, b: false, a: false, grip: false };
     state.curveAxis.y = 0;
+    updateSelectionUI();
     $('#vrBtn').disabled = state.current < 0;
   });
 

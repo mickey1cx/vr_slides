@@ -91,7 +91,7 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
 
    On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel also has a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve).
 
-   **Marks and deletion.** Press **A** (in VR) or click the **✓** badge in the top-right corner of a thumbnail (in 2D) to toggle a mark. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
+   **Marks and deletion.** Press **A** (in VR), the **A/M** key, the **"Toggle mark"** button in the panel, or the badge in the top-right corner of a thumbnail (in 2D; `+` to mark, `✓` to unmark) to toggle a mark. In VR photo mode a marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint under the photo. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
 
 4. VR controls:
 
@@ -99,7 +99,7 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
    - **Right thumbstick left/right** — previous/next photo (with repeat delay when held);
    - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo). The value is **saved separately for each source directory** and restored next time you enter VR;
    - **Curved screen**: hold **grip/squeeze** and move the right thumbstick **up/down** to set the bend from 0–100%. The percentage is shown in the hint under the photo. Like zoom, it is **saved separately for each source directory**. While grip is held, the stick does not browse photos;
-   - **A button** — toggle a mark on the current photo;
+   - **A button** — toggle a mark on the current photo. A marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint;
    - **Press the thumbstick** or the **B/Y** button — open the 3D gallery. Trigger and grip no longer browse photos in photo mode.
 
    **3D gallery**
@@ -113,7 +113,7 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
    - **"Exit VR" button** at the bottom of the gallery (point at it and press the trigger);
    - **Grip**, **thumbstick press** or **B/Y** — return to the photo.
 
-   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
+   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `A` / `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
    The hint panel under the photo and the gallery header show the current controls right in VR.
 
