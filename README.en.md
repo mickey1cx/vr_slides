@@ -180,6 +180,13 @@ Just translate the keys from `web/i18n/en.json` — the new language appears in 
 
 Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
+## Roadmap
+
+Near-term items (not implemented yet):
+
+- [ ] **Hand tracking.** Controller-free input via WebXR `hand-tracking`: a pinch gesture instead of the trigger, hand movement for pan, spreading fingers for zoom. Everything is currently bound to the thumbstick and buttons — gesture equivalents are needed for browsing photos, opening a card, marking and deleting, plus hints that switch depending on the active input method.
+- [ ] **MR (mixed reality).** An `immersive-ar` session with Quest 3 color passthrough: place the photo panel and the 3D gallery in the real room and adjust the panel position and size with your hands. This needs a separate WebXR session mode, spatial anchoring and UI adaptation (the current bar is designed for VR).
+
 ## Dependencies
 
 The server runs on plain Python 3.10+: no external packages required.
