@@ -20,6 +20,8 @@ const BAR_HEIGHT = 1.44;
 const BAR_WIDTH = 0.035;
 const STICK_DEAD = 0.6;
 const STICK_REPEAT = 320; // мс между повторами при удержании
+const PHOTO_SEGMENTS = 64; // сегменты по горизонтали для изогнутого экрана
+const CURVE_STEP = 0.08; // шаг изменения изгиба за один повтор стика
 // Луч попадает в плашку только по её центральной области: промежутки между
 // плашками остаются «пустым местом» и не перехватывают выделение стиком.
 const HIT_W = CARD_W * 0.44;
@@ -32,6 +34,8 @@ const state = {
   langs: [],
   zoomByRoot: {},
   zoomSaveTimer: null,
+  curveByRoot: {},
+  curveSaveTimer: null,
   rootId: '',
   rel: '',
   entries: [],
@@ -43,6 +47,9 @@ const state = {
   program: null,
   loc: null,
   vbo: null,
+  photoVbo: null,
+  photoData: null,
+  photoVertexCount: 0,
   texPhoto: null,
   texLabel: null,
   texWhite: null,
@@ -62,8 +69,11 @@ const state = {
   aspect: 1.0,
   mode: 'photo', // photo | gallery
   zoom: 1.0,
+  curve: 0, // 0 — плоский экран, 1 — максимальный изгиб
   axis: { x: 0, y: 0, last: 0 },
-  buttons: { stick: false, b: false },
+  curveAxis: { y: 0, last: 0 },
+  gripUsedForCurve: false,
+  buttons: { stick: false, b: false, grip: false },
   gallery: {
     rel: '', entries: [], cursor: 0, offset: 0, gen: 0,
     ray: null, hover: -1, navHover: '',
@@ -171,6 +181,7 @@ async function init() {
   state.config = cfg;
   state.langs = langs;
   state.zoomByRoot = saved.zoom || {};
+  state.curveByRoot = saved.curve || {};
 
   const langSelect = $('#langSelect');
   for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
@@ -189,8 +200,13 @@ async function init() {
     state.rootId = sel.value;
     state.rel = '';
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
+    setCurve(state.curveByRoot[state.rootId] ?? 0, false);
     saveState({ root: state.rootId }).catch(() => {});
     list().catch(showError);
+  });
+
+  $('#curveRange').addEventListener('input', (e) => {
+    setCurve(Number(e.target.value) / 100);
   });
 
   $('#upBtn').addEventListener('click', () => {
@@ -211,6 +227,7 @@ async function init() {
     state.rootId = hasRoot(saved.root) ? saved.root : cfg.roots[0].id;
     sel.value = state.rootId;
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
+    setCurve(state.curveByRoot[state.rootId] ?? 0, false);
     await list();
   } else {
     showError(t('errNoRoots'));
@@ -423,6 +440,13 @@ function initGL(gl) {
   gl.enableVertexAttribArray(state.loc.aUv);
   gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 16, 8);
 
+  // Сетка для изогнутого экрана: две вершины (верх/низ) на каждый сегмент.
+  state.photoVertexCount = (PHOTO_SEGMENTS + 1) * 2;
+  state.photoData = new Float32Array(state.photoVertexCount * 4);
+  state.photoVbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.photoVbo);
+  gl.bufferData(gl.ARRAY_BUFFER, state.photoData.byteLength, gl.DYNAMIC_DRAW);
+
   state.texPhoto = makeTexture(gl);
   state.texLabel = makeTexture(gl);
   state.texHeader = makeTexture(gl);
@@ -498,16 +522,50 @@ function uploadNavButtons(gl) {
   }
 }
 
-function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1]) {
+function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4) {
   gl.useProgram(state.program);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer || state.vbo);
+  gl.enableVertexAttribArray(state.loc.aPos);
+  gl.vertexAttribPointer(state.loc.aPos, 2, gl.FLOAT, false, 16, 0);
+  gl.enableVertexAttribArray(state.loc.aUv);
+  gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 16, 8);
   gl.uniformMatrix4fv(state.loc.uMVP, false, mvp);
   gl.uniform2fv(state.loc.uUvOffset, uvOffset);
   gl.uniform2fv(state.loc.uUvScale, uvScale);
   gl.uniform3fv(state.loc.uTint, tint);
   gl.uniform1i(state.loc.uTex, 0);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, count);
+}
+
+function drawCurvedPhoto(gl, proj, viewM, uvOffset, uvScale) {
+  const halfW = (state.height * state.aspect) / 2;
+  const z = state.distance / state.zoom;
+  const curve = state.curve;
+  const halfH = state.height / 2;
+  const data = state.photoData;
+
+  let p = 0;
+  for (let i = 0; i <= PHOTO_SEGMENTS; i++) {
+    const s = i / PHOTO_SEGMENTS;
+    const xFlat = (s - 0.5) * 2 * halfW;
+    // Плоская точка и точка на цилиндре радиуса z с тем же углом обзора.
+    const angle = Math.atan2(xFlat, z);
+    const xCurved = z * Math.sin(angle);
+    const zCurved = -z * Math.cos(angle);
+    const x = xFlat + (xCurved - xFlat) * curve;
+    const depth = -z + (zCurved + z) * curve;
+    data[p++] = x; data[p++] = halfH; data[p++] = s; data[p++] = 1;
+    data[p++] = x; data[p++] = -halfH; data[p++] = s; data[p++] = 0;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.photoVbo);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+
+  draw(
+    gl, state.texPhoto, multiply(proj, viewM), uvOffset, uvScale,
+    [1, 1, 1], state.photoVbo, state.photoVertexCount,
+  );
 }
 
 function updateLabel(entry) {
@@ -522,7 +580,10 @@ function updateLabel(entry) {
   ctx.fillText(`${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '22px sans-serif';
-  ctx.fillText(t('vrLabelHint', { zoom: state.zoom.toFixed(1) }), 16, 142);
+  ctx.fillText(t('vrLabelHint', {
+    zoom: state.zoom.toFixed(1),
+    curve: Math.round(state.curve * 100),
+  }), 16, 142);
   uploadImage(state.gl, state.texLabel, canvas);
 }
 
@@ -538,6 +599,36 @@ function zoomBy(direction) {
   state.zoomSaveTimer = setTimeout(() => {
     saveState({ zoom: state.zoom, root: state.rootId }).catch(() => {});
   }, 500);
+}
+
+function updateCurveUI() {
+  const percent = Math.round(state.curve * 100);
+  const range = $('#curveRange');
+  if (range) range.value = String(percent);
+  const output = $('#curveValue');
+  if (output) output.textContent = `${percent}%`;
+}
+
+function setCurve(value, persist = true) {
+  const next = Math.round(Math.min(1, Math.max(0, Number(value) || 0)) * 100) / 100;
+  if (next !== state.curve) {
+    state.curve = next;
+    state.curveByRoot[state.rootId] = next;
+    const entry = state.entries[state.current];
+    if (entry && state.gl) updateLabel(entry);
+    if (persist) {
+      clearTimeout(state.curveSaveTimer);
+      state.curveSaveTimer = setTimeout(() => {
+        saveState({ curve: state.curve, root: state.rootId }).catch(() => {});
+      }, 500);
+    }
+  }
+  updateCurveUI();
+}
+
+function curveBy(direction) {
+  // Вверх — больше изгиб, вниз — меньше (как зумом).
+  setCurve(state.curve + (direction < 0 ? CURVE_STEP : -CURVE_STEP));
 }
 
 // ---------------------------------------------------------------------------
@@ -895,6 +986,7 @@ function handleInput(pad, time) {
   let dy = 0;
   let stickPressed = false;
   let bPressed = false;
+  let gripPressed = false;
 
   if (pad) {
     const axes = pad.axes || [];
@@ -905,7 +997,14 @@ function handleInput(pad, time) {
     const buttons = pad.buttons || [];
     stickPressed = !!(buttons[3] && buttons[3].pressed);
     bPressed = !!(buttons[5] && buttons[5].pressed);
+    gripPressed = !!(buttons[1] && buttons[1].pressed);
   }
+
+  if (gripPressed && !state.buttons.grip) state.gripUsedForCurve = false;
+  if (!gripPressed && state.buttons.grip && !state.gripUsedForCurve && state.mode === 'photo') {
+    step(-1); // короткое нажатие grip без стика — как раньше: предыдущее фото
+  }
+  state.buttons.grip = gripPressed;
 
   const toggle = (stickPressed && !state.buttons.stick) || (bPressed && !state.buttons.b);
   state.buttons.stick = stickPressed;
@@ -914,6 +1013,25 @@ function handleInput(pad, time) {
     toggleGallery();
     return;
   }
+
+  // Зажатый grip в режиме фото включает настройку изгиба правым стиком.
+  if (gripPressed && state.mode === 'photo') {
+    if (dy) {
+      const ca = state.curveAxis;
+      if (ca.y !== dy || time - ca.last > STICK_REPEAT) {
+        curveBy(dy);
+        state.gripUsedForCurve = true;
+        ca.y = dy;
+        ca.last = time;
+      }
+    } else {
+      state.curveAxis.y = 0;
+    }
+    state.axis.x = 0;
+    state.axis.y = 0;
+    return;
+  }
+  state.curveAxis.y = 0;
 
   if (!dx && !dy) {
     state.axis.x = 0;
@@ -958,6 +1076,8 @@ function onKey(e) {
     if (e.key === 'ArrowLeft') step(-1);
     if (e.key === 'ArrowUp') zoomBy(-1);
     if (e.key === 'ArrowDown') zoomBy(1);
+    if (e.key === '[') setCurve(state.curve - CURVE_STEP);
+    if (e.key === ']') setCurve(state.curve + CURVE_STEP);
   }
 }
 
@@ -1001,15 +1121,9 @@ function onFrame(time, frame) {
       continue;
     }
 
-    const w = state.height * state.aspect;
     const z = state.distance / state.zoom;
-    const model = multiply(
-      translate(0, 0, -z),
-      scale(w, state.height, 1),
-    );
-    const mvp = multiply(proj, multiply(viewM, model));
     const right = view.eye === 'right';
-    draw(gl, state.texPhoto, mvp, right ? [0.5, 0] : [0, 0], [0.5, 1]);
+    drawCurvedPhoto(gl, proj, viewM, right ? [0.5, 0] : [0, 0], [0.5, 1]);
 
     const labelModel = multiply(
       translate(0, -state.height / 2 - 0.2, -z),
@@ -1032,6 +1146,7 @@ async function enterVR() {
   const session = await navigator.xr.requestSession('immersive-vr');
   state.session = session;
   state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
+  setCurve(state.curveByRoot[state.rootId] ?? 0, false);
 
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
@@ -1065,8 +1180,11 @@ async function enterVR() {
     openGallerySelection(target).catch(showError);
   });
   session.addEventListener('squeeze', () => {
-    if (state.mode === 'gallery') toggleGallery();
-    else step(-1);
+    if (state.mode === 'gallery') {
+      state.gripUsedForCurve = true; // чтобы отпускание grip не листало фото
+      toggleGallery();
+    }
+    // В режиме фото короткое нажатие grip обрабатывается в handleInput.
   });
   session.addEventListener('end', () => {
     state.session = null;
@@ -1076,6 +1194,9 @@ async function enterVR() {
     state.gallery.ray = null;
     state.gallery.hover = -1;
     state.gallery.navHover = '';
+    state.buttons.grip = false;
+    state.gripUsedForCurve = false;
+    state.curveAxis.y = 0;
     $('#vrBtn').disabled = state.current < 0;
   });
 

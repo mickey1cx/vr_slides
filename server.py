@@ -33,7 +33,7 @@ except ImportError:  # Pillow не обязателен
     RESAMPLE = None
 
 CONFIG: dict = {}
-STATE: dict = {"zoom": {}, "lang": None, "root": None}
+STATE: dict = {"zoom": {}, "curve": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 
@@ -205,15 +205,30 @@ def load_state() -> None:
             if isinstance(data, dict):
                 saved_root = data.get("root")
                 root_ids = {r["id"] for r in CONFIG["roots"]}
+
+                def clean_values(raw, low, high, digits):
+                    result = {}
+                    if isinstance(raw, dict):
+                        for key, value in raw.items():
+                            if key not in root_ids:
+                                continue
+                            try:
+                                number = float(value)
+                            except (TypeError, ValueError):
+                                continue
+                            result[key] = round(min(high, max(low, number)), digits)
+                    return result
+
                 STATE = {
-                    "zoom": data.get("zoom", {}) if isinstance(data.get("zoom"), dict) else {},
+                    "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
+                    "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
             return
         except (OSError, ValueError):
             pass
-    STATE = {"zoom": {}, "lang": None, "root": None}
+    STATE = {"zoom": {}, "curve": {}, "lang": None, "root": None}
 
 
 def save_state() -> None:
@@ -305,6 +320,13 @@ class Handler(BaseHTTPRequestHandler):
                     zoom = float(payload["zoom"])
                     zoom = min(2.5, max(0.6, zoom))
                     STATE.setdefault("zoom", {})[root_id] = round(zoom, 3)
+                    changed = True
+                if "curve" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешён
+                    curve = float(payload["curve"])
+                    curve = min(1.0, max(0.0, curve))
+                    STATE.setdefault("curve", {})[root_id] = round(curve, 2)
                     changed = True
                 if "lang" in payload:
                     lang = str(payload["lang"])
