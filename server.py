@@ -54,7 +54,7 @@ if sys.platform == "win32":
         ]
 
 CONFIG: dict = {}
-STATE: dict = {"zoom": {}, "curve": {}, "lang": None, "root": None}
+STATE: dict = {"zoom": {}, "curve": {}, "view": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 
@@ -275,7 +275,7 @@ def config_payload() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Состояние (зум по каталогам, выбранный язык)
+# Состояние (зум/изгиб/вид по каталогам, выбранный язык)
 # ---------------------------------------------------------------------------
 
 def load_state() -> None:
@@ -302,16 +302,42 @@ def load_state() -> None:
                             result[key] = round(min(high, max(low, number)), digits)
                     return result
 
+                def clean_views(raw):
+                    ranges = {
+                        "panX": (-1.0, 1.0, 3),
+                        "panY": (-1.0, 1.0, 3),
+                        "shift": (-0.1, 0.1, 3),
+                    }
+                    result = {}
+                    if not isinstance(raw, dict):
+                        return result
+                    for root_id, values in raw.items():
+                        if root_id not in root_ids or not isinstance(values, dict):
+                            continue
+                        clean = {}
+                        for key, (low, high, digits) in ranges.items():
+                            if key not in values:
+                                continue
+                            try:
+                                number = float(values[key])
+                            except (TypeError, ValueError):
+                                continue
+                            clean[key] = round(min(high, max(low, number)), digits)
+                        if clean:
+                            result[root_id] = clean
+                    return result
+
                 STATE = {
                     "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
                     "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
+                    "view": clean_views(data.get("view")),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
             return
         except (OSError, ValueError):
             pass
-    STATE = {"zoom": {}, "curve": {}, "lang": None, "root": None}
+    STATE = {"zoom": {}, "curve": {}, "view": {}, "lang": None, "root": None}
 
 
 def save_state() -> None:
@@ -418,6 +444,24 @@ class Handler(BaseHTTPRequestHandler):
                     curve = min(1.0, max(0.0, curve))
                     STATE.setdefault("curve", {})[root_id] = round(curve, 2)
                     changed = True
+                if "view" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешён
+                    raw_view = payload["view"]
+                    if not isinstance(raw_view, dict):
+                        raise ValueError("Ожидается объект настроек вида")
+                    view = STATE.setdefault("view", {}).setdefault(root_id, {})
+                    for key, low, high, digits in (
+                        ("panX", -1.0, 1.0, 3),
+                        ("panY", -1.0, 1.0, 3),
+                        ("shift", -0.1, 0.1, 3),
+                    ):
+                        if key not in raw_view:
+                            continue
+                        number = round(min(high, max(low, float(raw_view[key]))), digits)
+                        if view.get(key) != number:
+                            view[key] = number
+                            changed = True
                 if "lang" in payload:
                     lang = str(payload["lang"])
                     if not valid_language(lang):
