@@ -15,6 +15,7 @@ import socket
 import ssl
 import sys
 import threading
+import ctypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -32,10 +33,33 @@ except ImportError:  # Pillow не обязателен
     Image = None
     RESAMPLE = None
 
+try:
+    from send2trash import send2trash as _send2trash
+except ImportError:  # опционально: Windows использует ctypes, Linux/macOS — жёсткое удаление
+    _send2trash = None
+
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    class _SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR),
+            ("pTo", wintypes.LPCWSTR),
+            ("fFlags", ctypes.c_ushort),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", ctypes.c_void_p),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+
 CONFIG: dict = {}
 STATE: dict = {"zoom": {}, "curve": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
+
+# Предпочтительный способ удаления в корзину в текущем окружении.
+TRASH_MODE = "send2trash" if _send2trash else ("windows" if sys.platform == "win32" else "none")
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +77,7 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("max_texture_size", 4096)
     cfg.setdefault("language", "ru")
     cfg.setdefault("statefile", "state.json")
+    cfg.setdefault("delete_to_trash", True)
     cfg.setdefault("roots", [])
     return cfg
 
@@ -135,6 +160,63 @@ def list_dir(root: dict, rel: str) -> dict:
     return {"root": root["id"], "path": rel, "entries": entries}
 
 
+def move_to_trash(paths: list[Path]) -> str:
+    """Перемещает файлы в корзину. Возвращает использованный способ."""
+    mode = TRASH_MODE if CONFIG.get("delete_to_trash", True) else "none"
+    if mode == "none" or not paths:
+        for path in paths:
+            path.unlink()
+        return "none"
+
+    if mode == "send2trash":
+        for path in paths:
+            _send2trash(str(path))
+        return "send2trash"
+
+    # Windows: SHFileOperationW с FOF_ALLOWUNDO — стандартная Корзина.
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x0040
+    FOF_NOCONFIRMATION = 0x0010
+    FOF_SILENT = 0x0004
+    FOF_NOERRORUI = 0x0400
+    op = _SHFILEOPSTRUCTW()
+    op.wFunc = FO_DELETE
+    op.pFrom = "\0".join(str(p) for p in paths) + "\0\0"
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    if result != 0 or op.fAnyOperationsAborted:
+        raise OSError(f"SHFileOperationW завершилось с кодом {result}")
+    return "windows"
+
+
+def delete_files(root_id: str, rel: str, paths: list) -> dict:
+    """Удаляет только отмеченные изображения из текущего каталога."""
+    root = get_root(root_id)
+    folder = resolve(root, rel)
+    if not folder.is_dir():
+        raise ValueError("Это не каталог")
+    if not isinstance(paths, list):
+        raise ValueError("Ожидается список файлов")
+
+    targets = []
+    seen = set()
+    for item in paths:
+        if not isinstance(item, str):
+            raise ValueError("Некорректный путь файла")
+        if item in seen:
+            continue
+        seen.add(item)
+        target = resolve(root, item)
+        if target.parent != folder:
+            raise ValueError("Можно удалять только файлы текущего каталога")
+        if not target.is_file() or target.suffix.lower() not in EXTENSIONS:
+            raise ValueError("Можно удалять только изображения")
+        targets.append(target)
+
+    mode = move_to_trash(targets)
+    return {"deleted": [p.name for p in targets], "trash": mode != "none"}
+
+
 def thumbnail(path: Path, width: int):
     """Возвращает (bytes, mime). Без Pillow отдаёт оригинал."""
     if Image is None:
@@ -177,6 +259,7 @@ def config_payload() -> dict:
         "secure": True,
         "language": CONFIG["language"],
         "maxTextureSize": CONFIG["max_texture_size"],
+        "trash": bool(CONFIG.get("delete_to_trash", True) and TRASH_MODE != "none"),
         "roots": [
             {
                 "id": r["id"],
@@ -305,13 +388,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path != "/api/state":
+        if parsed.path not in ("/api/state", "/api/delete"):
             return self._error(404, "Не найдено")
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(max(0, length)).decode("utf-8") or "{}")
             if not isinstance(payload, dict):
                 raise ValueError("Ожидается JSON-объект")
+            if parsed.path == "/api/delete":
+                result = delete_files(
+                    str(payload.get("root", "")),
+                    str(payload.get("rel", "")),
+                    payload.get("paths", []),
+                )
+                return self._json(result)
             with STATE_LOCK:
                 changed = False
                 if "zoom" in payload:

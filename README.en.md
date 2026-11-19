@@ -28,6 +28,7 @@ Open `config.json`:
   "max_texture_size": 4096,
   "language": "en",
   "statefile": "state.json",
+  "delete_to_trash": true,
   "roots": [
     {
       "id": "sbs",
@@ -48,6 +49,7 @@ Open `config.json`:
 - You can add as many `roots` as you need, each with its own path and mode.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
 - `statefile` — where to keep saved settings (per-directory zoom and screen curvature, chosen language and last selected source).
+- `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
 
 ### 2. Generate a certificate
 
@@ -89,25 +91,29 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
 
    On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel also has a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve).
 
+   **Marks and deletion.** Press **A** (in VR) or click the **✓** badge in the top-right corner of a thumbnail (in 2D) to toggle a mark. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
+
 4. VR controls:
 
    **Photo mode**
    - **Right thumbstick left/right** — previous/next photo (with repeat delay when held);
    - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo). The value is **saved separately for each source directory** and restored next time you enter VR;
-   - **Curved screen**: hold **grip/squeeze** and move the right thumbstick **up/down** to set the bend from 0–100%. The percentage is shown in the hint under the photo. Like zoom, it is **saved separately for each source directory**. While grip is held, the stick does not browse photos; a quick grip tap without moving the stick still shows the previous photo;
-   - **Trigger** — next photo, **grip/squeeze** — previous photo;
-   - **Press the thumbstick** or the **B/Y** button — open the 3D gallery.
+   - **Curved screen**: hold **grip/squeeze** and move the right thumbstick **up/down** to set the bend from 0–100%. The percentage is shown in the hint under the photo. Like zoom, it is **saved separately for each source directory**. While grip is held, the stick does not browse photos;
+   - **A button** — toggle a mark on the current photo;
+   - **Press the thumbstick** or the **B/Y** button — open the 3D gallery. Trigger and grip no longer browse photos in photo mode.
 
    **3D gallery**
    - 12 visible cards (4×3) with a **vertical scrollbar** on the right: cards slide continuously as the cursor moves, and the bar shows your position in the list;
    - **Right controller ray** works only here: pointing highlights a card and the trigger opens it. The ray is disabled in photo mode;
    - **Thumbstick left/right** — move the selection, **up/down** — move one row;
    - **Trigger** — open the selection: a folder is entered, the "Back" card goes up one level, a photo is displayed. If you press the trigger while the ray points at **empty space between the cards** (or at nothing), the item selected with the **thumbstick** is opened — its frame is highlighted brighter to show this;
+   - **A button** — toggle a mark on the card under the ray (marked cards show a **✓** in the top-right corner);
+   - **"Delete (N)" plate** — delete marked photos (press trigger twice: first to arm the confirmation, then to delete);
    - **"⏮ To start" / "To end ⏭" buttons** at the bottom of the gallery move the cursor to the first/last item of the directory (point and press trigger);
    - **"Exit VR" button** at the bottom of the gallery (point at it and press the trigger);
    - **Grip**, **thumbstick press** or **B/Y** — return to the photo.
 
-   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode) and `Escape` (exit VR).
+   On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
    The hint panel under the photo and the gallery header show the current controls right in VR.
 
