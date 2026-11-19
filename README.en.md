@@ -191,7 +191,14 @@ Not implemented yet.
 
 ### Mid term
 
-- [ ] **Multiple headsets.** Two or more Quest units connected to one server at the same time, each with its own selected photo, zoom/curvature/pan and marks. State is currently shared per directory, so sessions would overwrite each other — a sync channel (WebSocket/SSE) is needed, plus an optional "lead headset" mode that broadcasts the selection to the others.
+- [ ] **Multiple headsets.** Two or more Quest units connected to one server at the same time. The base mode is **free viewing**: each session has its own selected photo, zoom/curvature/pan and marks. State is currently stored per directory, so sessions overwrite each other — a sync channel (WebSocket/SSE) and per-session state are needed.
+
+  On top of that, a **lead headset mode** ("watch together"):
+
+  - the lead browses photos, picks a folder and changes view settings (zoom, curvature, pan, stereo shift) — all of it is broadcast to the others;
+  - frame controls on followers are locked while this mode is active to prevent desync;
+  - the lead is the first headset to connect or is picked manually; there is a dedicated button/gesture to hand over the role, and it passes to the next headset if the lead disconnects;
+  - marks and deletion stay **local** to each headset by default so one person cannot delete photos for everyone; shared marks are an option.
 - [ ] **Phone remote.** A companion page on the same LAN: photo list, selection, browsing, pan and slideshow control from a phone. Connect via a QR link to the headset session and share one command channel with the VR client.
 - [ ] **Slideshow.** Auto-advance with a configurable interval, cross-fade between photos, play/pause and shuffle. Controlled from VR and from the phone remote; interval and order are saved with the other per-directory settings.
 
