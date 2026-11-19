@@ -389,7 +389,7 @@ function compile(gl, type, source) {
 
 function initGL(gl) {
   const vs = `
-    attribute vec2 aPos;
+    attribute vec3 aPos;
     attribute vec2 aUv;
     uniform mat4 uMVP;
     uniform vec2 uUvOffset;
@@ -397,7 +397,7 @@ function initGL(gl) {
     varying vec2 vUv;
     void main() {
       vUv = uUvOffset + aUv * uUvScale;
-      gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
+      gl_Position = uMVP * vec4(aPos, 1.0);
     }`;
   const fs = `
     precision mediump float;
@@ -427,22 +427,22 @@ function initGL(gl) {
   };
 
   const quad = new Float32Array([
-    -0.5, -0.5, 0, 0,
-     0.5, -0.5, 1, 0,
-    -0.5,  0.5, 0, 1,
-     0.5,  0.5, 1, 1,
+    -0.5, -0.5, 0, 0, 0,
+     0.5, -0.5, 0, 1, 0,
+    -0.5,  0.5, 0, 0, 1,
+     0.5,  0.5, 0, 1, 1,
   ]);
   state.vbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, state.vbo);
   gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(state.loc.aPos);
-  gl.vertexAttribPointer(state.loc.aPos, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(state.loc.aPos, 3, gl.FLOAT, false, 20, 0);
   gl.enableVertexAttribArray(state.loc.aUv);
-  gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 16, 8);
+  gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 20, 12);
 
   // Сетка для изогнутого экрана: две вершины (верх/низ) на каждый сегмент.
   state.photoVertexCount = (PHOTO_SEGMENTS + 1) * 2;
-  state.photoData = new Float32Array(state.photoVertexCount * 4);
+  state.photoData = new Float32Array(state.photoVertexCount * 5);
   state.photoVbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, state.photoVbo);
   gl.bufferData(gl.ARRAY_BUFFER, state.photoData.byteLength, gl.DYNAMIC_DRAW);
@@ -528,9 +528,9 @@ function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, 
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer || state.vbo);
   gl.enableVertexAttribArray(state.loc.aPos);
-  gl.vertexAttribPointer(state.loc.aPos, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(state.loc.aPos, 3, gl.FLOAT, false, 20, 0);
   gl.enableVertexAttribArray(state.loc.aUv);
-  gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 16, 8);
+  gl.vertexAttribPointer(state.loc.aUv, 2, gl.FLOAT, false, 20, 12);
   gl.uniformMatrix4fv(state.loc.uMVP, false, mvp);
   gl.uniform2fv(state.loc.uUvOffset, uvOffset);
   gl.uniform2fv(state.loc.uUvScale, uvScale);
@@ -556,8 +556,8 @@ function drawCurvedPhoto(gl, proj, viewM, uvOffset, uvScale) {
     const zCurved = -z * Math.cos(angle);
     const x = xFlat + (xCurved - xFlat) * curve;
     const depth = -z + (zCurved + z) * curve;
-    data[p++] = x; data[p++] = halfH; data[p++] = s; data[p++] = 1;
-    data[p++] = x; data[p++] = -halfH; data[p++] = s; data[p++] = 0;
+    data[p++] = x; data[p++] = halfH; data[p++] = depth; data[p++] = s; data[p++] = 1;
+    data[p++] = x; data[p++] = -halfH; data[p++] = depth; data[p++] = s; data[p++] = 0;
   }
   gl.bindBuffer(gl.ARRAY_BUFFER, state.photoVbo);
   gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
