@@ -1,0 +1,29 @@
+{
+  "host": "0.0.0.0",
+  "port": 8443,
+  "ip": null,
+  "certfile": "cert/cert.pem",
+  "keyfile": "cert/key.pem",
+  "thumb_width": 320,
+  "max_texture_size": 4096,
+  "roots": [
+    {
+      "id": "demo",
+      "name": "Тестовый пример",
+      "path": "example",
+      "sbs": "full",
+      "eye_aspect": null,
+      "distance": 2.0,
+      "height": 1.2
+    },
+    {
+      "id": "sbs",
+      "name": "Мои SBS-фото",
+      "path": "S:/HSMB_Pics",
+      "sbs": "full",
+      "eye_aspect": null,
+      "distance": 2.0,
+      "height": 1.2
+    }
+  ]
+}
