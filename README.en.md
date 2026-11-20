@@ -175,7 +175,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
 
    On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Shift` + arrows (pan), `Shift` + `[` / `]` (stereo shift), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `A` / `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
-   The hint panel under the photo and the gallery header show the current controls right in VR.
+   The panel under the photo shows the controls as a **structured layout**: the file index and name on top, then two columns — Photo / Zoom / Mark on the left and Pan / Shift / Curve on the right, with Gallery on a separate row. Current zoom, pan, shift and curvature values are drawn next to the corresponding keys. The gallery header shows its controls right in VR.
 
 #### Control settings (`controls`)
 
@@ -210,6 +210,8 @@ Each file is a flat key → string map. `__name` is the language name shown in t
   "vrLabelHint": "Stick ← → blättern · ↑ ↓ Zoom {zoom}× · Stick/B — Galerie"
 }
 ```
+
+The panel under the photo is drawn from the keys `vrHintPhoto`, `vrHintNavKeys`, `vrHintZoom`, `vrHintZoomKeys`, `vrHintMark`, `vrHintMarkKeys`, `vrHintPan`, `vrHintPanKeys`, `vrHintShift`, `vrHintShiftKeys`, `vrHintCurve`, `vrHintCurveKeys`, `vrHintGallery`, `vrHintGalleryKeys`. If you only translate `vrLabelHint` (as in the example above), the hint is drawn as a single auto-wrapped line — older language files keep working.
 
 Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
 
