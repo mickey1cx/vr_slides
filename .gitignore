@@ -1,5 +1,6 @@
 cert/
 thumbs/
+logs/
 state.json
 state.json.tmp
 __pycache__/
