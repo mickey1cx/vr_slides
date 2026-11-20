@@ -16,6 +16,7 @@
       <button id="firstBtn" data-i18n="first" data-i18n-title="first" title="В начало">⏮ В начало</button>
       <button id="lastBtn" data-i18n="last" data-i18n-title="last" title="В конец">В конец ⏭</button>
       <button id="deleteBtn" data-i18n="deleteSelected" data-i18n-title="deleteSelected" title="Удалить отмеченные" disabled>Удалить отмеченные (0)</button>
+      <button id="debugBtn" data-i18n="debug" data-i18n-title="debug" title="Логи">🐞 Логи</button>
       <a id="qrLink" class="qr-link" href="/qr" target="_blank" rel="noopener" data-i18n="qrLink" data-i18n-title="qrLink" title="QR-код">QR-код</a>
       <span id="crumb" class="crumb"></span>
       <span class="spacer"></span>
@@ -105,6 +106,18 @@
       </div>
     </aside>
   </main>
+
+  <div id="debugPanel" class="debug-panel" hidden>
+    <div class="debug-head">
+      <strong data-i18n="debugTitle">Журнал</strong>
+      <span id="debugMeta" class="debug-meta"></span>
+      <span class="spacer"></span>
+      <button id="debugRefresh" data-i18n="debugRefresh">Обновить</button>
+      <button id="debugClear" data-i18n="debugClear">Очистить</button>
+      <button id="debugClose" data-i18n="debugClose">Закрыть</button>
+    </div>
+    <pre id="debugLog" class="debug-log"></pre>
+  </div>
 
   <script type="module" src="/app.js"></script>
 </body>

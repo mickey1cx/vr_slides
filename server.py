@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import io
 import json
@@ -15,7 +16,8 @@ import socket
 import ssl
 import sys
 import threading
-import ctypes
+from collections import deque
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -66,6 +68,41 @@ STATE: dict = {
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 QR_PNG: bytes | None = None
+
+# Необязательное файловое логирование: включается флагом --log. Имя файла
+# фиксируется в момент запуска сервера, чтобы логи разных запусков не смешивались.
+STARTED_AT = datetime.now()
+LOG_PATH: Path | None = None
+LOG_LINES: deque[str] = deque(maxlen=500)
+LOG_LOCK = threading.Lock()
+
+
+def log(level: str, message: str, *args, console: bool = True) -> str:
+    """Пишет строку в лог (и в консоль для ошибок), возвращает готовую строку."""
+    text = message % args if args else str(message)
+    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [{level}] {text}"
+    if LOG_PATH:
+        with LOG_LOCK:
+            LOG_LINES.append(line)
+            try:
+                with LOG_PATH.open("a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except OSError:
+                pass
+    if console:
+        stream = sys.stderr if level in {"ERROR", "WARN"} else sys.stdout
+        print(line, file=stream)
+    return line
+
+
+def setup_logging(enabled: bool) -> None:
+    global LOG_PATH
+    if not enabled:
+        return
+    log_dir = BASE_DIR / "logs"
+    log_dir.mkdir(exist_ok=True)
+    LOG_PATH = log_dir / f"server_{STARTED_AT:%Y%m%d_%H%M%S}.log"
+    log("INFO", "log file: %s", LOG_PATH.name)
 
 LAYOUT_TYPES = {"mono", "sbs", "half", "ou", "hou", "pano", "auto"}
 LAYOUT_ALIASES = {
@@ -210,7 +247,7 @@ def make_qr_png(url: str, path: Path) -> bytes | None:
         QR_PNG = data
         return data
     except Exception as exc:  # noqa: BLE001 - QR не должен мешать запуску сервера
-        print(f"[ВНИМАНИЕ] Не удалось создать QR: {exc}", file=sys.stderr)
+        log("WARN", "Не удалось создать QR: %s", exc)
         return None
 
 
@@ -425,13 +462,15 @@ def config_payload() -> dict:
         "qr": QR_PNG is not None,
         "controls": CONFIG["controls"],
         "language": CONFIG["language"],
+        "log": LOG_PATH is not None,
         "maxTextureSize": CONFIG["max_texture_size"],
         "trash": bool(CONFIG.get("delete_to_trash", True) and TRASH_MODE != "none"),
         "roots": [
             {
                 "id": r["id"],
                 "name": r["name"],
-                "sbs": r["sbs"],   # mono | sbs | half | ou | hou | auto
+                "sbs": r["sbs"],   # mono | sbs | half | ou | hou | pano | auto
+                "pano_mode": r.get("pano_mode", "sphere"),  # sphere | cylinder
                 "swap": r["swap"],
                 "eyeAspect": r.get("eye_aspect"),
                 "distance": r.get("distance", 2.0),
@@ -617,6 +656,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(STATE)
             if path == "/api/i18n/list":
                 return self._json(available_languages())
+            if path == "/api/log":
+                try:
+                    tail = int(query.get("tail", ["200"])[0])
+                except (TypeError, ValueError):
+                    tail = 200
+                tail = max(1, min(500, tail))
+                with LOG_LOCK:
+                    lines = list(LOG_LINES)[-tail:]
+                return self._json({
+                    "enabled": LOG_PATH is not None,
+                    "file": LOG_PATH.name if LOG_PATH else None,
+                    "lines": lines,
+                })
             if path == "/api/list":
                 root = get_root(query.get("root", [""])[0])
                 return self._json(list_dir(root, query.get("path", [""])[0]))
@@ -640,13 +692,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/state", "/api/delete"):
+        if parsed.path not in ("/api/state", "/api/delete", "/api/log"):
             return self._error(404, "Не найдено")
         try:
-            length = int(self.headers.get("Content-Length", "0"))
+            length = min(int(self.headers.get("Content-Length", "0")), 16384)
             payload = json.loads(self.rfile.read(max(0, length)).decode("utf-8") or "{}")
             if not isinstance(payload, dict):
                 raise ValueError("Ожидается JSON-объект")
+            if parsed.path == "/api/log":
+                if payload.get("clear"):
+                    with LOG_LOCK:
+                        LOG_LINES.clear()
+                        if LOG_PATH:
+                            try:
+                                LOG_PATH.write_text("", encoding="utf-8")
+                            except OSError:
+                                pass
+                    return self._json({"ok": True, "enabled": LOG_PATH is not None, "cleared": True})
+                level = str(payload.get("level", "INFO")).upper()[:12]
+                if level not in {"DEBUG", "INFO", "WARN", "ERROR"}:
+                    level = "INFO"
+                message = str(payload.get("message", ""))[:2000]
+                stack = str(payload.get("stack", ""))[:4000]
+                source = str(payload.get("source", "web"))[:32]
+                if message:
+                    log("JS-" + level, f"{source}: {message}" + (f"\n{stack}" if stack else ""))
+                return self._json({"ok": True, "enabled": LOG_PATH is not None})
             if parsed.path == "/api/delete":
                 root_id = str(payload.get("root", ""))
                 result = delete_files(
@@ -798,7 +869,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, fmt, *args):
-        if "/api/" in (self.path or ""):
+        if LOG_PATH:
+            log("HTTP", f"{self.command} {self.path} :: {fmt % args}", console=False)
+        elif "/api/" in (self.path or ""):
             super().log_message(fmt, *args)
 
 
@@ -807,7 +880,11 @@ def main():
     parser.add_argument("--config", default=str(BASE_DIR / "config.json"))
     parser.add_argument("--http", action="store_true", help="без TLS (только localhost)")
     parser.add_argument("--no-qr", action="store_true", help="не создавать QR-код при запуске")
+    parser.add_argument("--log", action="store_true",
+                        help="писать логи в logs/server_<время запуска>.log (см. debug.bat)")
     args = parser.parse_args()
+
+    setup_logging(args.log)
 
     global CONFIG
     CONFIG = load_config(Path(args.config))
@@ -817,34 +894,34 @@ def main():
     for root in CONFIG["roots"]:
         p = root_base(root)
         if not p.is_dir():
-            print(f"[ВНИМАНИЕ] Каталог не найден: {p}", file=sys.stderr)
+            log("WARN", "Каталог не найден: %s", p)
 
     httpd = ThreadingHTTPServer((CONFIG["host"], CONFIG["port"]), Handler)
     if not args.http:
         cert = BASE_DIR / CONFIG["certfile"]
         key = BASE_DIR / CONFIG["keyfile"]
         if not cert.is_file() or not key.is_file():
-            print("Нет сертификата. Запустите: python tools/make_cert.py", file=sys.stderr)
+            log("ERROR", "Нет сертификата. Запустите: python tools/make_cert.py")
             sys.exit(1)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(cert), str(key))
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
 
     url = connection_url(args.http)
-    print(f"Откройте на Quest 3: {url}")
+    log("INFO", "Откройте на Quest 3: %s", url)
     if CONFIG.get("qr", True) and not args.no_qr:
         qr_path = BASE_DIR / CONFIG["qrfile"]
         if make_qr_png(url, qr_path):
-            print(f"QR-код: {qr_path}  (или {url}/qr)")
+            log("INFO", "QR-код: %s  (или %s/qr)", qr_path, url)
         else:
-            print("[QR] Для генерации установите: pip install segno", file=sys.stderr)
+            log("WARN", "Для генерации QR установите: pip install segno")
     if args.http:
-        print("[ВНИМАНИЕ] --http: для Quest 3 нужен HTTPS, иначе WebXR не запустится.", file=sys.stderr)
-    print("Ctrl+C для остановки.")
+        log("WARN", "--http: для Quest 3 нужен HTTPS, иначе WebXR не запустится.")
+    log("INFO", "Сервер запущен, Ctrl+C для остановки.")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nСтоп.")
+        log("INFO", "Стоп.")
         httpd.server_close()
 
 

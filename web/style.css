@@ -202,3 +202,16 @@ button.primary + fieldset { margin-top: 12px; }
 
 .hint { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .error { margin-bottom: 12px; padding: 10px; border: 1px solid #a33; border-radius: 6px; background: #2a1414; }
+
+.debug-panel {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  width: min(900px, calc(100vw - 32px)); height: min(520px, calc(100vh - 32px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: #0f1218; border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .65);
+}
+.debug-panel[hidden] { display: none; }
+.debug-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.debug-meta { color: var(--muted); font: 11px ui-monospace, Consolas, monospace; word-break: break-all; }
+.debug-log { flex: 1; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  color: #d7dce6; font: 12px/1.45 ui-monospace, Consolas, monospace; }

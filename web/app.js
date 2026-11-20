@@ -1,6 +1,49 @@
 const $ = (sel) => document.querySelector(sel);
 const enc = encodeURIComponent;
 
+// Клиентские ошибки буферизуются сразу, даже до загрузки конфигурации: если
+// сервер запущен с --log, они попадут в общий файл logs/server_<время>.log.
+const CLIENT_LOGS = [];
+let CLIENT_LOG_ENABLED = false;
+
+function logClient(level, message, err) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    message: String(message),
+    stack: err && err.stack ? String(err.stack) : '',
+    source: 'web',
+  };
+  CLIENT_LOGS.push(entry);
+  if (CLIENT_LOGS.length > 200) CLIENT_LOGS.shift();
+  if (CLIENT_LOG_ENABLED) {
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    }).catch(() => { /* логирование не должно ломать интерфейс */ });
+  }
+}
+
+function flushClientLogs() {
+  if (!CLIENT_LOG_ENABLED || !CLIENT_LOGS.length) return;
+  const pending = CLIENT_LOGS.splice(0);
+  for (const entry of pending) {
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    }).catch(() => {});
+  }
+}
+
+window.addEventListener('error', (event) => {
+  logClient('ERROR', `${event.message} @ ${event.filename || '?'}:${event.lineno || 0}`, event.error);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  logClient('ERROR', 'Unhandled rejection', event.reason);
+});
+
 const COLS = 4;
 const ROWS = 3;
 const SLOTS = COLS * ROWS;
@@ -192,6 +235,16 @@ const state = {
   },
 };
 
+// Частично созданные ресурсы нельзя оставлять в state: после неудачного входа
+// в VR из 2D-панели они приводят к ошибкам наподобие null.getContext.
+function clearGLState() {
+  state.gl = null;
+  state.program = null;
+  state.labelCanvas = null;
+  state.headerCanvas = null;
+  state.refSpace = null;
+}
+
 // ---------------------------------------------------------------------------
 // API / UI
 // ---------------------------------------------------------------------------
@@ -262,9 +315,31 @@ function applyTexts() {
 }
 
 function showError(err) {
+  const message = typeof err === 'string' ? err : err.message || String(err);
+  logClient('ERROR', message, err);
   const box = $('#error');
-  box.textContent = typeof err === 'string' ? err : err.message || String(err);
+  box.textContent = message;
   box.hidden = false;
+}
+
+function refreshDebugLog() {
+  const pre = $('#debugLog');
+  const meta = $('#debugMeta');
+  if (!pre) return Promise.resolve();
+  return api('/api/log?tail=300').then((data) => {
+    if (data.enabled) {
+      pre.textContent = (data.lines || []).join('\n') || t('debugEmpty');
+      meta.textContent = data.file || '';
+    } else {
+      const local = CLIENT_LOGS.map((e) =>
+        `[${e.ts}] [JS-${e.level}] ${e.message}${e.stack ? `\n${e.stack}` : ''}`);
+      pre.textContent = local.join('\n') || t('debugEmpty');
+      meta.textContent = t('debugDisabled');
+    }
+    pre.scrollTop = pre.scrollHeight;
+  }).catch((err) => {
+    pre.textContent = t('debugError', { error: err.message });
+  });
 }
 
 function rootCfg() {
@@ -519,6 +594,8 @@ async function init() {
     api('/api/i18n/list'),
   ]);
   state.config = cfg;
+  CLIENT_LOG_ENABLED = !!cfg.log;
+  flushClientLogs();
   state.controls = { ...DEFAULT_CONTROLS, ...(cfg.controls || {}) };
   state.langs = langs;
   const qrLink = $('#qrLink');
@@ -563,6 +640,19 @@ async function init() {
     });
   }
   $('#resetViewBtn').addEventListener('click', resetView);
+
+  $('#debugBtn').addEventListener('click', () => {
+    $('#debugPanel').hidden = false;
+    refreshDebugLog().catch(showError);
+  });
+  $('#debugClose').addEventListener('click', () => { $('#debugPanel').hidden = true; });
+  $('#debugRefresh').addEventListener('click', () => refreshDebugLog().catch(showError));
+  $('#debugClear').addEventListener('click', () => {
+    CLIENT_LOGS.length = 0;
+    apiPost('/api/log', { clear: true })
+      .catch(() => {})
+      .then(() => refreshDebugLog().catch(showError));
+  });
 
   $('#layoutDirSelect').addEventListener('change', () => saveLayoutDefault().catch(showError));
   $('#layoutSelect').addEventListener('change', () => saveLayoutOverride().catch(showError));
@@ -912,6 +1002,7 @@ async function saveLayoutDefault() {
 async function savePanoMode() {
   const value = $('#panoModeSelect')?.value || 'sphere';
   state.panoModeByRoot[state.rootId] = value;
+  logClient('INFO', `pano projection: ${value} (${state.rootId})`);
   await saveState({ root: state.rootId, panoMode: value });
   refreshThumbs();
   const entry = state.entries[state.current];
@@ -1036,7 +1127,6 @@ function initGL(gl) {
     uniform mat4 uMVP;
     uniform vec2 uUvOffset;
     uniform vec2 uUvScale;
-    uniform float uWrap;
     varying vec2 vUv;
     void main() {
       vUv = uUvOffset + aUv * uUvScale;
@@ -1348,6 +1438,7 @@ function drawWrappedHint(ctx, text, x, y, maxWidth, lineHeight) {
 
 function updateLabel(entry) {
   const canvas = state.labelCanvas;
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const width = canvas.width;
   ctx.fillStyle = '#10131a';
@@ -1665,7 +1756,7 @@ async function loadGalleryPage() {
 }
 
 function updateGalleryHeader() {
-  if (!state.gl) return;
+  if (!state.gl || !state.headerCanvas) return;
   const g = state.gallery;
   const ctx = state.headerCanvas.getContext('2d');
   ctx.fillStyle = '#10131a';
@@ -2083,63 +2174,71 @@ function onKey(e) {
 function onFrame(time, frame) {
   const session = frame.session;
   const refSpace = state.refSpace;
-  const pose = frame.getViewerPose(refSpace);
-  const source = rightInputSource(session);
-  handleInput(source && source.gamepad, time);
+  // После принудительного выхода из VR в очереди может остаться один кадр.
+  if (!state.gl || !refSpace || state.session !== session) return;
+  try {
+    const pose = frame.getViewerPose(refSpace);
+    const source = rightInputSource(session);
+    handleInput(source && source.gamepad, time);
 
-  const ray = computeRay(frame, refSpace, source);
-  const g = state.gallery;
-  g.ray = ray;
-  g.hover = ray && ray.index >= 0 && ray.index < g.entries.length ? ray.index : -1;
-  g.navHover = ray ? ray.nav : '';
-  if (g.deleteArmed && time - g.deleteArmedAt > DELETE_TIMEOUT) {
-    g.deleteArmed = false;
-    if (state.gl) uploadDeleteTexture(state.gl);
-  }
+    const ray = computeRay(frame, refSpace, source);
+    const g = state.gallery;
+    g.ray = ray;
+    g.hover = ray && ray.index >= 0 && ray.index < g.entries.length ? ray.index : -1;
+    g.navHover = ray ? ray.nav : '';
+    if (g.deleteArmed && time - g.deleteArmedAt > DELETE_TIMEOUT) {
+      g.deleteArmed = false;
+      if (state.gl) uploadDeleteTexture(state.gl);
+    }
 
-  if (!pose) {
+    if (!pose) {
+      session.requestAnimationFrame(onFrame, refSpace);
+      return;
+    }
+
+    const gl = state.gl;
+    const layer = session.renderState.baseLayer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.viewport(0, 0, layer.framebufferWidth, layer.framebufferHeight);
+    gl.clearColor(0.02, 0.02, 0.04, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    for (const view of pose.views) {
+      const vp = layer.getViewport(view);
+      gl.viewport(vp.x, vp.y, vp.width, vp.height);
+      const proj = view.projectionMatrix;
+      const viewM = view.transform.inverse.matrix;
+
+      if (state.mode === 'gallery') {
+        renderGallery(gl, proj, viewM);
+        continue;
+      }
+
+      if (state.photoLayout.type === 'pano') {
+        drawPano(gl, proj, viewM);
+        drawPanoOverlay(gl, proj);
+        continue;
+      }
+
+      const z = state.distance / state.zoom;
+      const right = view.eye === 'right';
+      const uv = layoutUv(state.photoLayout.type, right, state.photoLayout.swap);
+      drawCurvedPhoto(gl, proj, viewM, uv.offset, uv.scale, photoEyeModel(right));
+      drawPhotoMark(gl, proj, viewM);
+
+      const labelModel = multiply(
+        photoPanModel(),
+        multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.3, 1)),
+      );
+      draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
+    }
+
     session.requestAnimationFrame(onFrame, refSpace);
-    return;
+  } catch (err) {
+    // Ошибку кадра видно в панели «Логи» даже без подключенной консоли.
+    logClient('ERROR', 'VR frame failed', err);
+    session.end().catch(() => {});
   }
-
-  const gl = state.gl;
-  const layer = session.renderState.baseLayer;
-  gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-  gl.viewport(0, 0, layer.framebufferWidth, layer.framebufferHeight);
-  gl.clearColor(0.02, 0.02, 0.04, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  for (const view of pose.views) {
-    const vp = layer.getViewport(view);
-    gl.viewport(vp.x, vp.y, vp.width, vp.height);
-    const proj = view.projectionMatrix;
-    const viewM = view.transform.inverse.matrix;
-
-    if (state.mode === 'gallery') {
-      renderGallery(gl, proj, viewM);
-      continue;
-    }
-
-    if (state.photoLayout.type === 'pano') {
-      drawPano(gl, proj, viewM);
-      drawPanoOverlay(gl, proj);
-      continue;
-    }
-
-    const z = state.distance / state.zoom;
-    const right = view.eye === 'right';
-    const uv = layoutUv(state.photoLayout.type, right, state.photoLayout.swap);
-    drawCurvedPhoto(gl, proj, viewM, uv.offset, uv.scale, photoEyeModel(right));
-    drawPhotoMark(gl, proj, viewM);
-
-    const labelModel = multiply(
-      photoPanModel(),
-      multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.3, 1)),
-    );
-    draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
-  }
-
-  session.requestAnimationFrame(onFrame, refSpace);
 }
 
 async function enterVR() {
@@ -2150,73 +2249,83 @@ async function enterVR() {
     throw new Error(t('errNoImmersive'));
   }
 
+  logClient('INFO', 'enterVR: requesting immersive-vr session');
   const session = await navigator.xr.requestSession('immersive-vr');
   state.session = session;
-  state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
-  setCurve(state.curveByRoot[state.rootId] ?? 0, false);
-  applyViewFromRoot(state.rootId);
-  state.gallery.deleteArmed = false;
-
-  const canvas = document.createElement('canvas');
-  const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
-  if (!gl) {
-    await session.end();
-    throw new Error(t('errNoWebGL'));
-  }
-  await gl.makeXRCompatible();
-  state.gl = gl;
-  initGL(gl);
-  session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-  state.refSpace = await session.requestReferenceSpace('local');
-
-  session.addEventListener('select', () => {
-    // Триггер в режиме фото больше не листает — пометки ставит кнопка A.
-    if (state.mode !== 'gallery') return;
-    const g = state.gallery;
-    if (g.navHover === 'exit' && state.session) {
-      state.session.end();
-      return;
-    }
-    if (g.navHover === 'delete') {
-      armDelete();
-      return;
-    }
-    if (g.navHover === 'first' || g.navHover === 'last') {
-      setCursor(g.navHover === 'first' ? 0 : g.entries.length - 1);
-      return;
-    }
-    // Луч попал в пустое место (или не попал ни во что) — открываем то,
-    // что выбрано стиком. Луч поверх плашки открывает плашку под лучом.
-    const target = g.hover >= 0 ? g.hover : g.cursor;
-    openGallerySelection(target).catch(showError);
-  });
-  session.addEventListener('squeeze', () => {
-    if (state.mode === 'gallery') toggleGallery();
-    // В режиме фото grip — только модификатор изгиба в сочетании со стиком.
-  });
-  session.addEventListener('end', () => {
-    state.session = null;
-    state.gl = null;
-    state.refSpace = null;
-    state.mode = 'photo';
-    state.gallery.ray = null;
-    state.gallery.hover = -1;
-    state.gallery.navHover = '';
+  try {
+    state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
+    setCurve(state.curveByRoot[state.rootId] ?? 0, false);
+    applyViewFromRoot(state.rootId);
     state.gallery.deleteArmed = false;
-    state.buttons = { stick: false, b: false, a: false, grip: false, trigger: false };
-    state.curveAxis.y = 0;
-    state.panAxis = { x: 0, y: 0, last: 0 };
-    state.shiftAxis = { x: 0, last: 0 };
-    updateSelectionUI();
-    $('#vrBtn').disabled = state.current < 0;
-  });
 
-  if (state.current < 0) {
-    await session.end();
-    throw new Error(t('errNoImage'));
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
+    if (!gl) throw new Error(t('errNoWebGL'));
+    await gl.makeXRCompatible();
+    // state.gl выставляем только после успешной инициализации: иначе после
+    // неудачного входа 2D-панель попытается рисовать в отсутствующий canvas.
+    initGL(gl);
+    state.gl = gl;
+    logClient('INFO', 'enterVR: GL initialized');
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    state.refSpace = await session.requestReferenceSpace('local');
+
+    session.addEventListener('select', () => {
+      // Триггер в режиме фото больше не листает — пометки ставит кнопка A.
+      if (state.mode !== 'gallery') return;
+      const g = state.gallery;
+      if (g.navHover === 'exit' && state.session) {
+        state.session.end();
+        return;
+      }
+      if (g.navHover === 'delete') {
+        armDelete();
+        return;
+      }
+      if (g.navHover === 'first' || g.navHover === 'last') {
+        setCursor(g.navHover === 'first' ? 0 : g.entries.length - 1);
+        return;
+      }
+      // Луч попал в пустое место (или не попал ни во что) — открываем то,
+      // что выбрано стиком. Луч поверх плашки открывает плашку под лучом.
+      const target = g.hover >= 0 ? g.hover : g.cursor;
+      openGallerySelection(target).catch(showError);
+    });
+    session.addEventListener('squeeze', () => {
+      if (state.mode === 'gallery') toggleGallery();
+      // В режиме фото grip — только модификатор изгиба в сочетании со стиком.
+    });
+    session.addEventListener('end', () => {
+      logClient('INFO', 'VR session ended');
+      state.session = null;
+      clearGLState();
+      state.mode = 'photo';
+      state.gallery.ray = null;
+      state.gallery.hover = -1;
+      state.gallery.navHover = '';
+      state.gallery.deleteArmed = false;
+      state.buttons = { stick: false, b: false, a: false, grip: false, trigger: false };
+      state.curveAxis.y = 0;
+      state.panAxis = { x: 0, y: 0, last: 0 };
+      state.shiftAxis = { x: 0, last: 0 };
+      updateSelectionUI();
+      $('#vrBtn').disabled = state.current < 0;
+    });
+
+    if (state.current < 0) throw new Error(t('errNoImage'));
+    await loadPhoto(state.entries[state.current]);
+    logClient('INFO', `enterVR: photo loaded, layout=${state.photoLayout?.type || '?'}, projection=${panoMode()}`);
+    session.requestAnimationFrame(onFrame, state.refSpace);
+  } catch (err) {
+    // Любая ошибка входа не должна оставлять выставленный state.gl.
+    logClient('ERROR', 'enterVR failed', err);
+    clearGLState();
+    state.session = null;
+    try {
+      await session.end();
+    } catch { /* сессия уже закрыта */ }
+    throw err;
   }
-  await loadPhoto(state.entries[state.current]);
-  session.requestAnimationFrame(onFrame, state.refSpace);
 }
 
 init().catch(showError);

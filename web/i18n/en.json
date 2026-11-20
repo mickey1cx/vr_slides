@@ -77,5 +77,13 @@
   "errNoWebXR": "WebXR is unavailable. Open the page in Quest Browser over HTTPS.",
   "errNoImmersive": "This browser does not support immersive-vr.",
   "errNoWebGL": "WebGL is unavailable.",
-  "errNoImage": "Choose an image first."
+  "errNoImage": "Choose an image first.",
+  "debug": "Logs",
+  "debugTitle": "Log",
+  "debugRefresh": "Refresh",
+  "debugClear": "Clear",
+  "debugClose": "Close",
+  "debugDisabled": "File logging is off — showing the browser buffer. Run debug.bat.",
+  "debugEmpty": "No entries yet.",
+  "debugError": "Could not read logs: {error}"
 }

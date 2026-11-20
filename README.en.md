@@ -129,7 +129,9 @@ Or manually:
 python server.py
 ```
 
-Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context), `--no-qr` (skip QR generation at startup).
+Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context), `--no-qr` (skip QR generation at startup), `--log` (write a journal to `logs/server_<start time>.log`).
+
+**Debugging.** Run `debug.bat` — it enables `--log`. All server requests, errors and browser messages go into a file named after the server start time. No console needed: press the **Logs** button in the page header to see the latest entries (Refresh / Clear / Close). If the server runs without `--log`, the panel only shows the browser-side buffer and reminds you about `debug.bat`. The `logs/` folder is gitignored.
 
 At startup the server prints the URL and the QR file path:
 
@@ -273,6 +275,8 @@ web/i18n/*.json    — translation files (one file per language)
 state.json         — saved zoom/curve/view per directory, directory and per-image layouts, 360 projection mode, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
+logs/              — server logs per run (do not commit)
+debug.bat          — run with --log and the in-page Logs panel
 LICENSE            — MIT license
 docs/              — screenshots for the documentation
 ```
