@@ -81,8 +81,8 @@ Every layout uses one texture: only the eye's UV rectangle and the plane aspect 
 With `sbs: "auto"` each image is classified using three signals:
 
 1. **filename** — tokens like `sbs`, `half`, `hou`, `ou`, `tab`, `lr`, `rl`, `tb`, `bt`, `2d` (the strongest signal; `rl`/`bt` also enable `swap`);
-2. **aspect ratio** — very wide files (~32:9) are almost always full-SBS, very tall ones (~8:9) are Full-OU;
-3. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared by correlation.
+2. **aspect ratio** — very wide files (~32:9) are almost always full-SBS, very tall ones (~8:9) are Full-OU. Intermediate values (e.g. 1536×1280 = 1.2) are **not** treated as OU;
+3. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared. Horizontal edges are compared instead of raw brightness, with a small horizontal shift search: this handles real disparity between the eyes and avoids false matches on repeating textures.
 
 The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block solves this: a dropdown (including auto-detect) and a **Swap eyes** checkbox. The choice is saved **per file** in `state.json` and overrides the directory setting; **From directory** removes the override.
 
@@ -131,7 +131,7 @@ The QR encodes the same address that is used for the certificate. If the IP chan
 
 ### Example directory
 
-The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
+The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. For detection tests there are `08_big_disparity.jpg` (large disparity), `09_pair_1536.jpg` (vertical 1536×1280 pair with no hint in the name) and `10_plain_1536.jpg` (an ordinary photo of the same size as a control). The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
 
 You can regenerate the pictures with `python tools/make_examples.py` (requires Pillow).
 
