@@ -30,9 +30,9 @@
     </section>
 
     <aside class="viewer">
-      <h2 data-i18n="selected">Выбранное</h2>
       <div id="preview" class="preview"></div>
       <div id="info" class="info"></div>
+      <button id="vrBtn" class="primary" disabled data-i18n="enterVR">Войти в VR</button>
       <fieldset class="view-settings">
         <legend data-i18n="layoutSettings">Формат стереопары</legend>
         <label class="setting">
@@ -64,7 +64,6 @@
         </label>
         <div id="layoutInfo" class="layout-info"></div>
       </fieldset>
-      <button id="markBtn" data-i18n="markTitle" data-i18n-title="markTitle" title="Пометить / снять пометку" disabled>Пометить / снять пометку</button>
       <fieldset class="view-settings">
         <legend data-i18n="viewSettings">Настройки вида</legend>
         <label class="setting">
@@ -89,7 +88,6 @@
         <input id="curveRange" type="range" min="0" max="100" step="1" value="0">
         <output id="curveValue">0%</output>
       </label>
-      <button id="vrBtn" class="primary" disabled data-i18n="enterVR">Войти в VR</button>
       <div class="hint">
         <b data-i18n="questHintPrefix">На Quest 3 откройте</b> <span id="questUrl" class="mono"></span>
         <span data-i18n="questHintSuffix">в браузере и примите предупреждение о сертификате.</span><br>
