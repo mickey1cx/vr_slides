@@ -124,6 +124,15 @@ def main() -> None:
         (1536, 1280), Image.Resampling.LANCZOS
     ), "10_plain_1536.jpg")
 
+    # Портретный full-SBS 1920x1280: два кадра 960x1280 без сжатия.
+    # Aspect 1.5 попадает в отдельный диапазон и должен давать sbs, а не half.
+    near = eye_image("L", "portrait full sbs", 40, (236, 124, 72))
+    far = eye_image("R", "portrait full sbs", -40, (236, 124, 72))
+    img = Image.new("RGB", (1920, 1280))
+    paste(img, near, (0, 0, 960, 1280))
+    paste(img, far, (960, 0, 1920, 1280))
+    save(img, "11_pair_1920.jpg")
+
 
 if __name__ == "__main__":
     main()
