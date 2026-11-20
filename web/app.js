@@ -36,6 +36,47 @@ const DEFAULT_CONTROLS = {
   panBase: 0.35,      // смещение при 1×, чтобы слайдер всегда давал эффект
   panGain: 1.0,       // дополнительное смещение при зуме
 };
+// Поддерживаемые раскладки стереопары. auto — определить формат по файлу.
+const LAYOUT_TYPES = ['mono', 'sbs', 'half', 'ou', 'hou', 'auto'];
+const LAYOUT_ALIASES = {
+  '2d': 'mono', flat: 'mono',
+  full: 'sbs', lr: 'sbs', rl: 'sbs', stereo: 'sbs', '3d': 'sbs',
+  'side-by-side': 'sbs', sidebyside: 'sbs', 'full-sbs': 'sbs', fullsbs: 'sbs',
+  hsbs: 'half', 'half-sbs': 'half', 'sbs-half': 'half', halfsbs: 'half', sbshalf: 'half', 'half-side': 'half',
+  tab: 'ou', tb: 'ou', bt: 'ou', 'top-bottom': 'ou', topbottom: 'ou',
+  'over-under': 'ou', overunder: 'ou', 'full-ou': 'ou', fullou: 'ou', fou: 'ou',
+  hou: 'hou', 'half-ou': 'hou', halfou: 'hou', 'half-tab': 'hou', halftab: 'hou',
+};
+const LAYOUT_LABEL_KEYS = {
+  mono: 'layoutMono', sbs: 'layoutSbs', half: 'layoutHalf',
+  ou: 'layoutOu', hou: 'layoutHou', auto: 'layoutAuto',
+};
+
+function normaliseLayout(value) {
+  const key = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (!key) return null;
+  if (LAYOUT_TYPES.includes(key)) return key;
+  return LAYOUT_ALIASES[key] || null;
+}
+
+function layoutEyeAspect(type, imgAspect) {
+  if (type === 'sbs') return imgAspect / 2;
+  if (type === 'ou') return imgAspect * 2;
+  return imgAspect;
+}
+
+// UV-прямоугольник глаза. UNPACK_FLIP_Y_WEBGL включен, поэтому v=1 — верх картинки.
+function layoutUv(type, right, swap) {
+  const other = swap ? !right : right;
+  if (type === 'ou' || type === 'hou') {
+    return { offset: [0, other ? 0 : 0.5], scale: [1, 0.5] };
+  }
+  if (type === 'sbs' || type === 'half') {
+    return { offset: [other ? 0.5 : 0, 0], scale: [0.5, 1] };
+  }
+  return { offset: [0, 0], scale: [1, 1] };
+}
+
 // Луч попадает в плашку только по ее центральной области: промежутки между
 // плашками остаются «пустым местом» и не перехватывают выделение стиком.
 const HIT_W = CARD_W * 0.44;
@@ -55,6 +96,10 @@ const state = {
   viewByRoot: {},
   viewSaveTimer: null,
   view: { panX: 0, panY: 0, shift: 0 },
+  layoutByRoot: {}, // ручные переопределения формата: root -> rel -> {type, swap}
+  layoutCache: {}, // кэш автоопределения: root|rel -> результат
+  photoLayout: { type: 'sbs', swap: false, detected: null, rootType: 'sbs', override: null },
+  photoLayoutEntry: '',
   rootId: '',
   rel: '',
   entries: [],
@@ -208,6 +253,153 @@ async function loadImage(url) {
   return img;
 }
 
+// ---------------------------------------------------------------------------
+// Определение формата стереопары
+// ---------------------------------------------------------------------------
+
+function nameLayout(name) {
+  const n = String(name || '').toLowerCase().replace(/[_.\s]+/g, '-').replace(/[^a-z0-9-]/g, '-');
+  const rules = [
+    [/(^|-)half-?ou(-|$)|(^|-)hou(-|$)|(^|-)half-?tab(-|$)|(^|-)htab(-|$)/, 'hou'],
+    [/(^|-)full-?ou(-|$)|(^|-)fou(-|$)|(^|-)top-?bottom(-|$)|(^|-)tab(-|$)|(^|-)tb(-|$)|(^|-)ou(-|$)/, 'ou'],
+    [/(^|-)half-?sbs(-|$)|(^|-)sbs-?half(-|$)|(^|-)hsbs(-|$)|(^|-)half-?side(-|$)/, 'half'],
+    [/(^|-)sbs(-|$)|(^|-)lr(-|$)|(^|-)stereo(-|$)|(^|-)3d(-|$)|side-?by-?side/, 'sbs'],
+    [/(^|-)mono(-|$)|(^|-)2d(-|$)|(^|-)flat(-|$)/, 'mono'],
+  ];
+  for (const [pattern, type] of rules) {
+    if (pattern.test(n)) return type;
+  }
+  return null;
+}
+
+function nameSwap(name) {
+  const n = String(name || '').toLowerCase().replace(/[_.\s]+/g, '-').replace(/[^a-z0-9-]/g, '-');
+  if (/(^|-)(rl|bt)(-|$)/.test(n)) return true;
+  if (/(^|-)(lr|tb)(-|$)/.test(n)) return false;
+  return null;
+}
+
+function luminance(data, x, y, width) {
+  const i = (y * width + x) * 4;
+  return data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+}
+
+function pearson(a, b) {
+  const n = a.length;
+  if (n < 4) return 0;
+  let ma = 0;
+  let mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n;
+  mb /= n;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - ma;
+    const y = b[i] - mb;
+    num += x * y;
+    da += x * x;
+    db += y * y;
+  }
+  if (da < 1e-6 || db < 1e-6) return 0;
+  return num / Math.sqrt(da * db);
+}
+
+// Сходство половин картинки: по ширине (SBS) или по высоте (OU).
+function halfCorrelation(img, vertical) {
+  const w = 96;
+  const h = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 0;
+  ctx.drawImage(img, 0, 0, w, h);
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return 0;
+  }
+  const a = [];
+  const b = [];
+  if (vertical) {
+    for (let y = 0; y < h / 2; y += 2) {
+      for (let x = 0; x < w; x += 2) {
+        a.push(luminance(data, x, y, w));
+        b.push(luminance(data, x, y + h / 2, w));
+      }
+    }
+  } else {
+    for (let y = 0; y < h; y += 2) {
+      for (let x = 0; x < w / 2; x += 2) {
+        a.push(luminance(data, x, y, w));
+        b.push(luminance(data, x + w / 2, y, w));
+      }
+    }
+  }
+  return pearson(a, b);
+}
+
+function corrScore(value) {
+  return Math.max(0, Math.min(1, (value - 0.35) / 0.5));
+}
+
+function detectLayout(img, name) {
+  const aspect = img.width / img.height;
+  const hint = nameLayout(name);
+  const swap = nameSwap(name);
+  const sbsCorr = halfCorrelation(img, false);
+  const ouCorr = halfCorrelation(img, true);
+  const wide = aspect >= 2.4;
+  const tall = aspect <= 1.15;
+  const normal = !wide && !tall;
+  const cs = corrScore(sbsCorr);
+  const co = corrScore(ouCorr);
+  // Широкий файл — почти всегда sbs, высокий — ou; умеренный признак слабее.
+  const sbsAspect = wide ? 0.35 : (aspect > 1.4 ? 0.2 : 0);
+  const ouAspect = tall ? 0.35 : (aspect < 1.5 ? 0.2 : 0);
+  const candidates = [
+    { type: 'sbs', score: (hint === 'sbs' ? 0.45 : 0) + sbsAspect + cs * 0.45 },
+    { type: 'half', score: (hint === 'half' ? 0.45 : 0) + (normal ? 0.35 : 0) + cs * 0.45 },
+    { type: 'ou', score: (hint === 'ou' ? 0.45 : 0) + ouAspect + co * 0.45 },
+    { type: 'hou', score: (hint === 'hou' ? 0.45 : 0) + (normal ? 0.35 : 0) + co * 0.45 },
+    { type: 'mono', score: (hint === 'mono' ? 0.45 : 0) + (normal ? 0.35 : 0) + (1 - Math.max(cs, co)) * 0.45 },
+  ].sort((a, b) => b.score - a.score);
+  let best = candidates[0];
+  if (hint && hint !== best.type) {
+    const byName = candidates.find((item) => item.type === hint);
+    if (byName && byName.score >= best.score - 0.2) best = byName;
+  }
+  const source = hint === best.type ? 'name' : (best.score >= 0.55 ? 'pixels' : 'fallback');
+  return {
+    type: best.type,
+    swap,
+    confidence: Math.round(Math.min(1, best.score) * 100),
+    source,
+    sbsCorr,
+    ouCorr,
+  };
+}
+
+function effectiveLayout(entry, img) {
+  const rc = rootCfg();
+  const rootType = normaliseLayout(rc.sbs) || 'sbs';
+  const override = state.layoutByRoot[state.rootId]?.[entry?.path] || null;
+  let type = override?.type || rootType;
+  let swap = typeof override?.swap === 'boolean' ? override.swap : !!rc.swap;
+  let detected = null;
+  if (type === 'auto') {
+    const key = `${state.rootId}|${entry.path}`;
+    detected = state.layoutCache[key] || detectLayout(img, entry.name);
+    state.layoutCache[key] = detected;
+    type = detected.type;
+    if (detected.swap !== null && typeof override?.swap !== 'boolean') swap = detected.swap;
+  }
+  return { type, swap, detected, rootType, override };
+}
+
 async function init() {
   const [cfg, saved, langs] = await Promise.all([
     api('/api/config'),
@@ -222,6 +414,7 @@ async function init() {
   state.zoomByRoot = saved.zoom || {};
   state.curveByRoot = saved.curve || {};
   state.viewByRoot = saved.view || {};
+  state.layoutByRoot = saved.layout || {};
 
   const langSelect = $('#langSelect');
   for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
@@ -256,6 +449,9 @@ async function init() {
     });
   }
   $('#resetViewBtn').addEventListener('click', resetView);
+
+  $('#layoutSelect').addEventListener('change', () => saveLayoutOverride().catch(showError));
+  $('#layoutSwap').addEventListener('change', () => saveLayoutOverride().catch(showError));
 
   $('#upBtn').addEventListener('click', () => {
     const parts = state.rel.split('/').filter(Boolean);
@@ -302,6 +498,7 @@ function applyListing(data, clearSelection = true) {
   $('#crumb').textContent = [rootCfg().name, ...parts].join(' / ');
   renderGrid();
   updateSelectionUI();
+  updateLayoutUI(null, null);
 }
 
 function renderGrid() {
@@ -479,12 +676,14 @@ function jumpToEdge(direction) {
 }
 
 function updateInfo(entry) {
-  const rc = rootCfg();
+  if (!entry) return;
+  const layout = state.photoLayoutEntry === entry.path ? state.photoLayout : null;
+  const type = layout?.type || normaliseLayout(rootCfg().sbs) || 'sbs';
   $('#info').textContent = t('info', {
     name: entry.name,
     width: entry.width || '?',
     height: entry.height || '?',
-    sbs: rc.sbs,
+    layout: t(LAYOUT_LABEL_KEYS[type] || 'layoutSbs'),
     count: state.images.length,
   });
 }
@@ -497,7 +696,6 @@ async function openImage(entry) {
   img.src = imageUrl(entry);
   img.alt = entry.name;
   preview.append(img);
-  updateInfo(entry);
   $('#vrBtn').disabled = false;
   updateSelectionUI();
   await loadPhoto(entry);
@@ -507,12 +705,68 @@ async function loadPhoto(entry) {
   const rc = rootCfg();
   const img = await loadImage(imageUrl(entry));
   const imgAspect = img.width / img.height;
-  state.aspect = rc.eyeAspect || (rc.sbs === 'half' ? imgAspect : imgAspect / 2);
+  const layout = effectiveLayout(entry, img);
+  state.photoLayout = layout;
+  state.photoLayoutEntry = entry?.path || '';
+  state.aspect = rc.eyeAspect || layoutEyeAspect(layout.type, imgAspect);
   state.distance = rc.distance || 2.0;
   state.height = rc.height || 1.2;
+  updateInfo(entry);
+  updateLayoutUI(entry, layout);
   if (state.gl) {
     uploadImage(state.gl, state.texPhoto, img);
     updateLabel(entry);
+  }
+}
+
+function updateLayoutUI(entry, layout) {
+  const select = $('#layoutSelect');
+  const swap = $('#layoutSwap');
+  const info = $('#layoutInfo');
+  const active = !!entry && !!layout;
+  if (select) {
+    select.disabled = !active;
+    select.value = active ? (layout.override?.type || 'root') : 'root';
+  }
+  if (swap) {
+    swap.disabled = !active || layout.type === 'mono';
+    swap.checked = active ? layout.swap : false;
+  }
+  if (info) {
+    if (!active) {
+      info.textContent = t('chooseImage');
+      return;
+    }
+    const parts = [t(LAYOUT_LABEL_KEYS[layout.type] || 'layoutSbs')];
+    if (layout.detected) {
+      const source = t(`layoutSource${layout.detected.source[0].toUpperCase()}${layout.detected.source.slice(1)}`);
+      parts.push(t('layoutDetected', { source, confidence: layout.detected.confidence }));
+    } else if (layout.override?.type === 'root') {
+      parts.push(t('layoutFromRoot'));
+    }
+    info.textContent = parts.join(' · ');
+  }
+}
+
+async function saveLayoutOverride() {
+  const entry = state.entries[state.current];
+  if (!entry || entry.type !== 'image') return;
+  const value = $('#layoutSelect')?.value || 'root';
+  const swap = !!$('#layoutSwap')?.checked;
+  let payload = null;
+  if (value !== 'root') {
+    payload = { type: value, swap };
+  } else if (swap !== !!state.photoLayout?.swap) {
+    // Чтобы сохранить только swap, фиксируем текущий (возможно, определенный) тип.
+    payload = { type: state.photoLayout?.type || 'sbs', swap };
+  }
+  const map = state.layoutByRoot[state.rootId] || (state.layoutByRoot[state.rootId] = {});
+  if (payload) map[entry.path] = { ...payload };
+  else delete map[entry.path];
+  await saveState({ root: state.rootId, path: entry.path, layout: payload });
+  if (state.photoLayoutEntry === entry.path) {
+    // Пересчитать aspect и UV с новым форматом.
+    await loadPhoto(entry);
   }
 }
 
@@ -525,7 +779,6 @@ function step(delta) {
   state.current = state.entries.indexOf(entry);
   const previewImg = $('#preview img');
   if (previewImg) previewImg.src = imageUrl(entry);
-  updateInfo(entry);
   loadPhoto(entry).catch(showError);
 }
 
@@ -964,7 +1217,7 @@ function photoPanModel() {
 
 function photoEyeModel(right) {
   const pan = photoPanModel();
-  if (!right || !state.view.shift) return pan;
+  if (!right || !state.view.shift || state.photoLayout.type === 'mono') return pan;
   const halfW = (state.height * state.aspect) / 2;
   return multiply(pan, translate(state.view.shift * halfW, 0, 0));
 }
@@ -1542,7 +1795,8 @@ function onFrame(time, frame) {
 
     const z = state.distance / state.zoom;
     const right = view.eye === 'right';
-    drawCurvedPhoto(gl, proj, viewM, right ? [0.5, 0] : [0, 0], [0.5, 1], photoEyeModel(right));
+    const uv = layoutUv(state.photoLayout.type, right, state.photoLayout.swap);
+    drawCurvedPhoto(gl, proj, viewM, uv.offset, uv.scale, photoEyeModel(right));
     drawPhotoMark(gl, proj, viewM);
 
     const labelModel = multiply(

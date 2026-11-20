@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. One SBS file is loaded as **a single texture**. The left eye samples UV `0..0.5`, the right eye samples `0.5..1`. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image.
 
 ## Quick start
 
@@ -45,7 +45,8 @@ Open `config.json`:
       "id": "sbs",
       "name": "My SBS photos",
       "path": "D:/Stereo",
-      "sbs": "full",
+      "sbs": "auto",
+      "swap": false,
       "eye_aspect": null,
       "distance": 2.0,
       "height": 1.2
@@ -54,7 +55,8 @@ Open `config.json`:
 }
 ```
 
-- `sbs`: `full` — each eye occupies half of the file width (e.g. 5760×2880 → 2880×2880 per eye); `half` — each eye is horizontally compressed (e.g. 1920×1080 → 1920×1080 per eye after stretching).
+- `sbs`: default layout for the directory. `auto` — detect the layout of every file (recommended); `mono` — an ordinary 2D image; `sbs` / `full` — two side-by-side halves at full resolution; `half` — half-SBS, each eye compressed horizontally; `ou` — Full-OU / TAB / Top-and-Bottom, two vertical halves at full resolution; `hou` — Half-OU / HOU, each eye compressed vertically by 2. Aliases such as `2d`, `full-ou`, `half-ou`, `hsbs` are accepted too.
+- `swap`: `true` when the eyes or halves are stored in reverse order (`RL` instead of `LR`, `BT` instead of `TB`). It can be overridden per image in the UI.
 - `eye_aspect`: explicit aspect ratio of one eye; when `null`, it is derived from the image size.
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
 - You can add as many `roots` as you need, each with its own path and mode.
@@ -63,6 +65,26 @@ Open `config.json`:
 - `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
 - `controls` — thumbstick pan and stereo shift settings (see below).
 - `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
+
+#### Stereo layouts and auto-detection
+
+| `sbs` value | What the file contains | Aspect of one eye |
+|---|---|---|
+| `mono` | ordinary 2D image, both eyes see the same picture | `W/H` |
+| `sbs` / `full` | two side-by-side halves, no compression | `W/H / 2` |
+| `half` | two side-by-side halves, each compressed horizontally | `W/H` |
+| `ou` | two stacked halves, no compression | `W/H × 2` |
+| `hou` | two stacked halves, each compressed vertically by 2 | `W/H` |
+
+Every layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry.
+
+With `sbs: "auto"` each image is classified using three signals:
+
+1. **filename** — tokens like `sbs`, `half`, `hou`, `ou`, `tab`, `lr`, `rl`, `tb`, `bt`, `2d` (the strongest signal; `rl`/`bt` also enable `swap`);
+2. **aspect ratio** — very wide files (~32:9) are almost always full-SBS, very tall ones (~8:9) are Full-OU;
+3. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared by correlation.
+
+The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block solves this: a dropdown (including auto-detect) and a **Swap eyes** checkbox. The choice is saved **per file** in `state.json` and overrides the directory setting; **From directory** removes the override.
 
 ### 2. Generate a certificate
 
@@ -109,7 +131,9 @@ The QR encodes the same address that is used for the certificate. If the IP chan
 
 ### Example directory
 
-The bundle includes an `example/` directory with `sample_sbs.jpg`, described in `config.json` as the `demo` source ("Example"). Pick it in the **Catalog** dropdown to try the app without your own photos:
+The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
+
+You can regenerate the pictures with `python tools/make_examples.py` (requires Pillow).
 
 ![2D gallery with the contents of the example directory](docs/example-gallery.png)
 
@@ -119,7 +143,7 @@ The bundle includes an `example/` directory with `sample_sbs.jpg`, described in 
 2. At the certificate warning choose **Advanced → Proceed** (required: without accepting the certificate WebXR will not start).
 3. Pick a photo and press **Enter VR**.
 
-   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory.
+   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory. The **Stereo layout** block shows how the current file was recognized; the dropdown and **Swap eyes** checkbox let you pin the layout or eye order for this particular image.
 
    **Marks and deletion.** Press **A** (in VR), the **A/M** key, the **"Toggle mark"** button in the panel, or the badge in the top-right corner of a thumbnail (in 2D; `+` to mark, `✓` to unmark) to toggle a mark. In VR photo mode a marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint under the photo. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
 
@@ -186,7 +210,7 @@ Just translate the keys from `web/i18n/en.json` — the new language appears in 
 
 **Russian convention.** In all Russian texts in this project — docs, `web/i18n/ru.json`, UI strings and comments — write `е` instead of `ё`: `все`, `желтый`, `раздает`, `сохраненное`.
 
-Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
+Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, per-image layout overrides, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
 ## Roadmap
 
@@ -214,7 +238,7 @@ Not implemented yet.
 
 The server runs on plain Python 3.10+: no external packages required.
 
-`Pillow` is optional (`pip install -r requirements.txt`): without it, thumbnails and downscaling are disabled and the browser downloads full files, which is noticeably slower for a large collection.
+`Pillow` is optional (`pip install -r requirements.txt`): without it, thumbnails and downscaling are disabled and the browser downloads full files, which is noticeably slower for a large collection. It is also only needed to regenerate the test images (`tools/make_examples.py`); auto-detection itself runs in the browser via `<canvas>` and needs no Pillow.
 
 `segno` is also optional: it is only needed to generate the QR image at startup. Without it the server works as before and just prints the URL.
 
@@ -224,11 +248,12 @@ The server runs on plain Python 3.10+: no external packages required.
 config.json        — directories and display settings
 server.py          — HTTP(S) server and JSON API
 tools/make_cert.py — self-signed certificate with IP SAN
+tools/make_examples.py — generator of test images for all layouts in example/
 web/index.html     — 2D file browser and Enter VR button
-web/app.js         — SBS loading, WebGL rendering, WebXR session, input
+web/app.js         — layout loading and detection, WebGL rendering, WebXR session, input
 web/style.css
 web/i18n/*.json    — translation files (one file per language)
-state.json         — saved zoom/curve/view per directory, language and source (do not commit)
+state.json         — saved zoom/curve/view per directory, per-image layout overrides, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 LICENSE            — MIT license
@@ -239,7 +264,9 @@ docs/              — screenshots for the documentation
 
 - **"Enter VR" says WebXR is unavailable** — the page was opened over `http://<IP>` instead of HTTPS. You need `https://` with an accepted certificate.
 - **No files shown** — check `path` in `config.json` (on Windows use forward slashes, e.g. `D:/Stereo`) and the extensions: `.jpg .jpeg .png .webp` are supported.
-- **The image looks stretched** — wrong `sbs` mode: switch `full` ↔ `half` or set `eye_aspect` to a number.
+- **The image looks stretched** — the layout was detected incorrectly. Pick the right one in the **Stereo layout** block of the selected-image panel (`sbs` ↔ `half` ↔ `ou` ↔ `hou`), or set `sbs`/`eye_aspect` for the directory.
+- **The eyes are swapped or the image looks "inside out"** — enable **Swap eyes** for this file or set `swap: true` for the whole directory.
+- **Auto-detection is wrong** — expected for symmetric scenes and ordinary 16:9 photos: pin the layout manually in **Stereo layout**, it will be saved in `state.json`.
 - **The texture does not load on Quest 3** — reduce `max_texture_size` to 2048.
 - **Network is slow** — connect the PC with a cable, use 5 GHz for the headset, and enable Pillow for thumbnails.
 
