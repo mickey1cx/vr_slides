@@ -919,10 +919,10 @@ function initGL(gl) {
 
   state.labelCanvas = document.createElement('canvas');
   state.labelCanvas.width = 1024;
-  state.labelCanvas.height = 192;
+  state.labelCanvas.height = 256;
   const lctx = state.labelCanvas.getContext('2d');
   lctx.fillStyle = '#10131a';
-  lctx.fillRect(0, 0, 1024, 192);
+  lctx.fillRect(0, 0, 1024, 256);
   uploadImage(gl, state.texLabel, state.labelCanvas);
 
   state.headerCanvas = document.createElement('canvas');
@@ -1091,26 +1091,79 @@ function drawCurvedPhoto(gl, proj, viewM, uvOffset, uvScale, model) {
   );
 }
 
+// Строка подсказки: серый заголовок блока и яркое значение.
+function drawHintRow(ctx, x, y, labelKey, value) {
+  ctx.font = '20px sans-serif';
+  ctx.fillStyle = '#7d889e';
+  const label = t(labelKey);
+  ctx.fillText(label, x, y);
+  ctx.fillStyle = '#e7eaf0';
+  ctx.fillText(value, x + ctx.measureText(label).width + 12, y);
+}
+
+// Fallback для кастомных языков, где есть только старый vrLabelHint.
+function drawWrappedHint(ctx, text, x, y, maxWidth, lineHeight) {
+  ctx.font = '20px sans-serif';
+  ctx.fillStyle = '#9aa3b5';
+  let line = '';
+  for (const word of String(text).split(/\s+/)) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (ctx.measureText(candidate).width > maxWidth && line) {
+      ctx.fillText(line, x, y);
+      y += lineHeight;
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) ctx.fillText(line, x, y);
+}
+
 function updateLabel(entry) {
   const canvas = state.labelCanvas;
   const ctx = canvas.getContext('2d');
+  const width = canvas.width;
   ctx.fillStyle = '#10131a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, width, canvas.height);
   const marked = !!(entry && state.selected.has(entry.path));
   ctx.fillStyle = marked ? '#ffd34d' : '#ffffff';
   ctx.font = '28px sans-serif';
   ctx.textBaseline = 'middle';
   const index = state.images.indexOf(entry) + 1;
-  ctx.fillText(`${marked ? '✓ ' : ''}${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 16, 58);
-  ctx.fillStyle = '#9aa3b5';
-  ctx.font = '22px sans-serif';
-  ctx.fillText(t('vrLabelHint', {
+  ctx.fillText(`${marked ? '✓ ' : ''}${index}/${state.images.length}  ${entry.name}`.slice(0, 60), 20, 40);
+
+  ctx.strokeStyle = '#2a3040';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(20, 72);
+  ctx.lineTo(width - 20, 72);
+  ctx.stroke();
+
+  const vars = {
     zoom: state.zoom.toFixed(1),
     curve: Math.round(state.curve * 100),
     panX: signedPercent(state.view.panX),
     panY: signedPercent(state.view.panY),
     shift: signedPercent(state.view.shift, 1).replace('%', ''),
-  }), 16, 142);
+  };
+
+  if (!state.dict.vrHintPhoto && state.dict.vrLabelHint) {
+    drawWrappedHint(ctx, t('vrLabelHint', vars), 20, 104, width - 40, 32);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(width / 2, 90);
+    ctx.lineTo(width / 2, 200);
+    ctx.stroke();
+    const left = 20;
+    const right = width / 2 + 20;
+    drawHintRow(ctx, left, 106, 'vrHintPhoto', t('vrHintNavKeys'));
+    drawHintRow(ctx, left, 142, 'vrHintZoom', `${t('vrHintZoomKeys')} ${vars.zoom}×`);
+    drawHintRow(ctx, left, 178, 'vrHintMark', t('vrHintMarkKeys'));
+    drawHintRow(ctx, right, 106, 'vrHintPan', `${t('vrHintPanKeys')} ${vars.panX}/${vars.panY}`);
+    drawHintRow(ctx, right, 142, 'vrHintShift', `${t('vrHintShiftKeys')} ${vars.shift}%`);
+    drawHintRow(ctx, right, 178, 'vrHintCurve', `${t('vrHintCurveKeys')} ${vars.curve}%`);
+    drawHintRow(ctx, left, 222, 'vrHintGallery', t('vrHintGalleryKeys'));
+  }
   uploadImage(state.gl, state.texLabel, canvas);
 }
 
@@ -1842,7 +1895,7 @@ function onFrame(time, frame) {
 
     const labelModel = multiply(
       photoPanModel(),
-      multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.225, 1)),
+      multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.3, 1)),
     );
     draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
   }
