@@ -36,7 +36,7 @@ const DEFAULT_CONTROLS = {
   panBase: 0.35,      // смещение при 1×, чтобы слайдер всегда давал эффект
   panGain: 1.0,       // дополнительное смещение при зуме
 };
-// Луч попадает в плашку только по её центральной области: промежутки между
+// Луч попадает в плашку только по ее центральной области: промежутки между
 // плашками остаются «пустым местом» и не перехватывают выделение стиком.
 const HIT_W = CARD_W * 0.44;
 const HIT_H = CARD_H * 0.42;
@@ -456,7 +456,7 @@ function armDelete() {
 }
 
 // Кнопки «в начало / в конец»: прокручиваем сетку к нужной карточке,
-// подсвечиваем её и открываем — так же, как если бы по ней кликнули.
+// подсвечиваем ее и открываем — так же, как если бы по ней кликнули.
 function jumpToEdge(direction) {
   const candidates = state.images.length ? state.images : state.entries.filter((e) => e.type === 'dir');
   if (!candidates.length) return;
@@ -827,7 +827,7 @@ function zoomBy(direction) {
   const entry = state.entries[state.current];
   if (entry && state.gl) updateLabel(entry);
 
-  // Сохраняем на сервер не чаще одного раза в 500 мс, чтобы не дёргать диск при удержании стика.
+  // Сохраняем на сервер не чаще одного раза в 500 мс, чтобы не дергать диск при удержании стика.
   clearTimeout(state.zoomSaveTimer);
   state.zoomSaveTimer = setTimeout(() => {
     saveState({ zoom: state.zoom, root: state.rootId }).catch(() => {});

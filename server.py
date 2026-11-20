@@ -35,7 +35,7 @@ except ImportError:  # Pillow не обязателен
 
 try:
     from send2trash import send2trash as _send2trash
-except ImportError:  # опционально: Windows использует ctypes, Linux/macOS — жёсткое удаление
+except ImportError:  # опционально: Windows использует ctypes, Linux/macOS — жесткое удаление
     _send2trash = None
 
 try:
@@ -181,7 +181,7 @@ def resolve(root: dict, rel: str) -> Path:
     try:
         target.relative_to(base)
     except ValueError as exc:
-        raise ValueError("Путь выходит за пределы разрешённого каталога") from exc
+        raise ValueError("Путь выходит за пределы разрешенного каталога") from exc
     if not target.exists():
         raise FileNotFoundError(f"Не найдено: {target}")
     return target
@@ -282,7 +282,7 @@ def delete_files(root_id: str, rel: str, paths: list) -> dict:
 
 
 def thumbnail(path: Path, width: int):
-    """Возвращает (bytes, mime). Без Pillow отдаёт оригинал."""
+    """Возвращает (bytes, mime). Без Pillow отдает оригинал."""
     if Image is None:
         return path.read_bytes(), guess_mime(path)
     key = hashlib.sha256(f"{path}|{width}".encode("utf-8")).hexdigest()[:24] + ".jpg"
@@ -479,7 +479,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(404, "Не найдено")
         except (ValueError, FileNotFoundError, KeyError, IndexError) as exc:
             return self._error(400, str(exc))
-        except Exception as exc:  # noqa: BLE001 - отдаём ошибку в браузер
+        except Exception as exc:  # noqa: BLE001 - отдаем ошибку в браузер
             return self._error(500, f"{type(exc).__name__}: {exc}")
 
     def do_POST(self):
@@ -502,21 +502,21 @@ class Handler(BaseHTTPRequestHandler):
                 changed = False
                 if "zoom" in payload:
                     root_id = str(payload.get("root", ""))
-                    get_root(root_id)  # проверяем, что каталог разрешён
+                    get_root(root_id)  # проверяем, что каталог разрешен
                     zoom = float(payload["zoom"])
                     zoom = min(2.5, max(0.6, zoom))
                     STATE.setdefault("zoom", {})[root_id] = round(zoom, 3)
                     changed = True
                 if "curve" in payload:
                     root_id = str(payload.get("root", ""))
-                    get_root(root_id)  # проверяем, что каталог разрешён
+                    get_root(root_id)  # проверяем, что каталог разрешен
                     curve = float(payload["curve"])
                     curve = min(1.0, max(0.0, curve))
                     STATE.setdefault("curve", {})[root_id] = round(curve, 2)
                     changed = True
                 if "view" in payload:
                     root_id = str(payload.get("root", ""))
-                    get_root(root_id)  # проверяем, что каталог разрешён
+                    get_root(root_id)  # проверяем, что каталог разрешен
                     raw_view = payload["view"]
                     if not isinstance(raw_view, dict):
                         raise ValueError("Ожидается объект настроек вида")
@@ -540,7 +540,7 @@ class Handler(BaseHTTPRequestHandler):
                     changed = True
                 if "root" in payload:
                     root_id = str(payload["root"])
-                    get_root(root_id)  # проверяем, что каталог разрешён
+                    get_root(root_id)  # проверяем, что каталог разрешен
                     STATE["root"] = root_id
                     changed = True
                 if changed:
