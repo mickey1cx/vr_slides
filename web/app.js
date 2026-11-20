@@ -368,15 +368,18 @@ function detectLayout(img, name) {
   const wide = aspect >= 2.4;
   const tall = aspect <= 1.05; // Full-OU обычно ~8:9; 1.2 — уже не OU-признак
   const normal = !wide && !tall;
+  // Портретный full-SBS (например 1920×1280 = 1.5) неотличим от half-SBS по
+  // пикселям, но занимает отдельный диапазон: 1.35..1.6. Полу-half с
+  // портретными глазами обычно дает 1.0..1.2, а 16:9 — 1.6..2.4.
+  const portraitSbs = aspect >= 1.35 && aspect <= 1.6;
   const cs = corrScore(sbsCorr);
   const co = corrScore(ouCorr);
-  // Широкий файл — почти всегда sbs, высокий — ou. Промежуточные значения
-  // (например 1536×1280) не должны давать ложный признак OU.
-  const sbsAspect = wide ? 0.35 : (aspect > 1.4 ? 0.2 : 0);
+  const sbsAspect = wide || portraitSbs ? 0.35 : (aspect > 1.6 ? 0.2 : 0);
+  const halfAspect = normal && !portraitSbs ? 0.35 : 0;
   const ouAspect = tall ? 0.35 : 0;
   const candidates = [
     { type: 'sbs', score: (hint === 'sbs' ? 0.45 : 0) + sbsAspect + cs * 0.5 },
-    { type: 'half', score: (hint === 'half' ? 0.45 : 0) + (normal ? 0.35 : 0) + cs * 0.5 },
+    { type: 'half', score: (hint === 'half' ? 0.45 : 0) + halfAspect + cs * 0.5 },
     { type: 'ou', score: (hint === 'ou' ? 0.45 : 0) + ouAspect + co * 0.5 },
     { type: 'hou', score: (hint === 'hou' ? 0.45 : 0) + (normal ? 0.35 : 0) + co * 0.5 },
     { type: 'mono', score: (hint === 'mono' ? 0.45 : 0) + (normal ? 0.35 : 0) + (1 - Math.max(cs, co)) * 0.5 },
