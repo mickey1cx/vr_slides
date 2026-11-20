@@ -223,6 +223,7 @@ web/i18n/*.json    — translation files (one file per language)
 state.json         — saved zoom/curve/view per directory, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
+LICENSE            — MIT license
 ```
 
 ## Troubleshooting
@@ -236,3 +237,7 @@ thumbs/            — thumbnail cache (do not commit)
 ## Security
 
 The server only serves files from the directories listed in `roots`. Paths containing `..` and symlinks that escape a root are rejected. Only bind to `0.0.0.0` on a trusted home network.
+
+## License
+
+[MIT](LICENSE) — free to use, modify and distribute, including in commercial projects. The only condition is to keep the copyright notice and the license text.
