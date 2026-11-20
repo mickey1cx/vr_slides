@@ -91,6 +91,8 @@ The result is shown in the selected-image panel with a confidence score. Auto-de
 
 Priority: **image override → directory layout → `config.json` → auto-detection**. The directory setting is a safety net for folders where every photo uses the same format but the detector gets it wrong.
 
+The same rules apply to **thumbnails**: the 2D grid and the VR gallery show a single eye with correct cropping instead of the whole file. Thumbnails are redrawn when the directory or image layout changes, and the refined result from opening the full image is applied back to its thumbnail. Rendering is lazy — only thumbnails near the visible grid area are drawn.
+
 ### 2. Generate a certificate
 
 ```bat

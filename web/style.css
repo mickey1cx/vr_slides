@@ -152,6 +152,7 @@ button.primary + fieldset { margin-top: 12px; }
   place-items: center;
   font-size: 32px;
 }
+.card canvas.thumb { display: block; }
 .card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .preview {

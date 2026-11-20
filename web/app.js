@@ -77,6 +77,36 @@ function layoutUv(type, right, swap) {
   return { offset: [0, 0], scale: [1, 1] };
 }
 
+// Рисует один глаз стереопары в прямоугольник эскиза: формат и swap учитываются
+// теми же правилами, что и в VR. Лишнее обрезается по центру (аналог object-fit: cover).
+function layoutKey(entry) {
+  return `${state.rootId}|${state.rel}|${entry.path}`;
+}
+
+function drawEyeThumb(ctx, img, entry, dx, dy, dw, dh, known = null) {
+  const layout = known || state.confirmedLayout[layoutKey(entry)] || effectiveLayout(entry, img);
+  const uv = layoutUv(layout.type, false, layout.swap);
+  const sx = img.width * uv.offset[0];
+  const sy = img.height * (1 - uv.offset[1] - uv.scale[1]);
+  const sw = img.width * uv.scale[0];
+  const sh = img.height * uv.scale[1];
+  const scale = Math.max(dw / sw, dh / sh);
+  const outW = sw * scale;
+  const outH = sh * scale;
+  ctx.drawImage(img, sx, sy, sw, sh,
+    dx + (dw - outW) / 2, dy + (dh - outH) / 2, outW, outH);
+  return layout;
+}
+
+async function drawCardThumb(canvas, entry, known = null) {
+  const img = await loadImage(thumbUrl(entry));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#222838';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = drawEyeThumb(ctx, img, entry, 0, 0, canvas.width, canvas.height, known);
+  canvas.dataset.layout = layout.type;
+}
+
 // Луч попадает в плашку только по ее центральной области: промежутки между
 // плашками остаются «пустым местом» и не перехватывают выделение стиком.
 const HIT_W = CARD_W * 0.44;
@@ -98,7 +128,9 @@ const state = {
   view: { panX: 0, panY: 0, shift: 0 },
   layoutByRoot: {}, // ручные переопределения формата: root -> rel -> {type, swap}
   layoutDefaultByRoot: {}, // формат всего каталога: root -> тип (по умолчанию авто)
-  layoutCache: {}, // кэш автоопределения: root|rel -> результат
+  layoutCache: {}, // кэш автоопределения: root|rel|ширина -> результат
+  confirmedLayout: {}, // формат, уже определенный по полному изображению
+  thumbObserver: null, // ленивая отрисовка эскизов 2D-галереи
   photoLayout: { type: 'sbs', swap: false, detected: null, rootType: 'sbs', override: null },
   photoLayoutEntry: '',
   rootId: '',
@@ -416,7 +448,8 @@ function effectiveLayout(entry, img) {
   let swap = typeof override?.swap === 'boolean' ? override.swap : !!rc.swap;
   let detected = null;
   if (type === 'auto') {
-    const key = `${state.rootId}|${entry.path}`;
+    // Миниатюра и полное изображение могут дать разные результаты — держим их отдельно.
+    const key = `${state.rootId}|${entry.path}|${img.width}`;
     detected = state.layoutCache[key] || detectLayout(img, entry.name);
     state.layoutCache[key] = detected;
     type = detected.type;
@@ -531,6 +564,18 @@ function applyListing(data, clearSelection = true) {
 function renderGrid() {
   const grid = $('#grid');
   grid.replaceChildren();
+  state.thumbObserver?.disconnect();
+  state.thumbObserver = null;
+  const observer = ('IntersectionObserver' in window)
+    ? new IntersectionObserver((records) => {
+        for (const rec of records) {
+          if (!rec.isIntersecting) continue;
+          observer.unobserve(rec.target);
+          drawCardThumb(rec.target, rec.target._entry).catch(() => {});
+        }
+      }, { root: grid, rootMargin: '400px' })
+    : null;
+  state.thumbObserver = observer;
   for (const entry of state.entries) {
     const card = document.createElement('button');
     card.className = 'card';
@@ -548,11 +593,13 @@ function renderGrid() {
         list().catch(showError);
       });
     } else {
-      const thumb = document.createElement('img');
+      const thumb = document.createElement('canvas');
       thumb.className = 'thumb';
-      thumb.loading = 'lazy';
-      thumb.alt = '';
-      thumb.src = thumbUrl(entry);
+      thumb.width = 640;
+      thumb.height = 320;
+      thumb._entry = entry; // для ленивой отрисовки по появлению в сетке
+      if (observer) observer.observe(thumb);
+      else drawCardThumb(thumb, entry).catch(() => {});
       const badge = document.createElement('span');
       badge.className = 'pick';
       badge.textContent = state.selected.has(entry.path) ? '✓' : '+';
@@ -568,6 +615,12 @@ function renderGrid() {
     }
     grid.append(card);
   }
+}
+
+// Формат каталога/фото изменился — перерисовать эскизы в обеих галереях.
+function refreshThumbs() {
+  renderGrid();
+  loadGalleryPage();
 }
 
 function updateSelectionUI() {
@@ -733,6 +786,10 @@ async function loadPhoto(entry) {
   const img = await loadImage(imageUrl(entry));
   const imgAspect = img.width / img.height;
   const layout = effectiveLayout(entry, img);
+  state.confirmedLayout[layoutKey(entry)] = layout; // уточняем формат по полному изображению
+  for (const canvas of document.querySelectorAll('.card canvas.thumb')) {
+    if (canvas._entry === entry) drawCardThumb(canvas, entry, layout).catch(() => {});
+  }
   state.photoLayout = layout;
   state.photoLayoutEntry = entry?.path || '';
   state.aspect = rc.eyeAspect || layoutEyeAspect(layout.type, imgAspect);
@@ -781,12 +838,14 @@ function updateLayoutUI(entry, layout) {
 
 async function saveLayoutDefault() {
   const value = $('#layoutDirSelect')?.value || 'auto';
+  state.confirmedLayout = {}; // старые решения по полным изображениям больше не действуют
   if (value === 'auto') delete state.layoutDefaultByRoot[state.rootId];
   else state.layoutDefaultByRoot[state.rootId] = value;
   await saveState({ root: state.rootId, layoutDefault: value === 'auto' ? null : value });
   // Пересчитать aspect и UV текущей картинки с новым форматом каталога.
   const entry = state.entries[state.current];
   if (entry && entry.type === 'image') await loadPhoto(entry);
+  refreshThumbs();
 }
 
 async function saveLayoutOverride() {
@@ -801,6 +860,7 @@ async function saveLayoutOverride() {
     // Чтобы сохранить только swap, фиксируем текущий (возможно, определенный) тип.
     payload = { type: state.photoLayout?.type || 'sbs', swap };
   }
+  delete state.confirmedLayout[layoutKey(entry)];
   const map = state.layoutByRoot[state.rootId] || (state.layoutByRoot[state.rootId] = {});
   if (payload) map[entry.path] = { ...payload };
   else delete map[entry.path];
@@ -809,6 +869,7 @@ async function saveLayoutOverride() {
     // Пересчитать aspect и UV с новым форматом.
     await loadPhoto(entry);
   }
+  refreshThumbs();
 }
 
 function step(delta) {
@@ -1388,7 +1449,7 @@ async function makeCardCanvas(entry) {
   ctx.fillRect(0, 0, 512, 320);
   if (entry.type === 'image') {
     const img = await loadImage(thumbUrl(entry));
-    ctx.drawImage(img, 0, 0, 512, 256);
+    drawEyeThumb(ctx, img, entry, 0, 0, 512, 256);
   } else {
     ctx.font = '96px sans-serif';
     ctx.textAlign = 'center';
