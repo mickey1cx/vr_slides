@@ -107,6 +107,12 @@ The QR encodes the same address that is used for the certificate. If the IP chan
 
 > Quest 3 has no general built-in QR scanner: its system QR support is limited to Wi‑Fi setup. To open the link from a QR, install any third-party QR scanner app on Quest (App Lab/SideQuest), or just type the URL manually. After the first visit you can bookmark it in Quest Browser.
 
+### Example directory
+
+The bundle includes an `example/` directory with `sample_sbs.jpg`, described in `config.json` as the `demo` source ("Example"). Pick it in the **Catalog** dropdown to try the app without your own photos:
+
+![2D gallery with the contents of the example directory](docs/example-gallery.png)
+
 ### 4. On Quest 3
 
 1. Open **Browser** and enter `https://<PC-IP>:8443` (or scan the generated QR with a third-party scanner).
@@ -226,6 +232,7 @@ state.json         — saved zoom/curve/view per directory, language and source 
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 LICENSE            — MIT license
+docs/              — screenshots for the documentation
 ```
 
 ## Troubleshooting
