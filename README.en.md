@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere (or a closed cylinder) and viewed **from the inside** — head orientation comes from WebXR.
 
 ## Quick start
 
@@ -46,6 +46,7 @@ Open `config.json`:
       "name": "My SBS photos",
       "path": "D:/Stereo",
       "sbs": "auto",
+      "pano_mode": "sphere",
       "swap": false,
       "eye_aspect": null,
       "distance": 2.0,
@@ -55,7 +56,8 @@ Open `config.json`:
 }
 ```
 
-- `sbs`: default layout for the directory. `auto` — detect the layout of every file (recommended); `mono` — an ordinary 2D image; `sbs` / `full` — two side-by-side halves at full resolution; `half` — half-SBS, each eye compressed horizontally; `ou` — Full-OU / TAB / Top-and-Bottom, two vertical halves at full resolution; `hou` — Half-OU / HOU, each eye compressed vertically by 2. Aliases such as `2d`, `full-ou`, `half-ou`, `hsbs` are accepted too.
+- `sbs`: default layout for the directory. `auto` — detect the layout of every file (recommended); `mono` — an ordinary 2D image; `sbs` / `full` — two side-by-side halves at full resolution; `half` — half-SBS, each eye compressed horizontally; `ou` — Full-OU / TAB / Top-and-Bottom, two vertical halves at full resolution; `hou` — Half-OU / HOU, each eye compressed vertically by 2; `pano` — a 360° equirectangular panorama viewed from inside a sphere. Aliases such as `2d`, `full-ou`, `half-ou`, `hsbs`, `360`, `equirect` are accepted too.
+- `pano_mode`: projection for 360 panoramas — `sphere` (default) or `cylinder` (a flat image wrapped around the viewer, assumed seamless). Can also be switched in the UI; the choice is saved in `state.json` as `panoMode[rootId]`.
 - `swap`: `true` when the eyes or halves are stored in reverse order (`RL` instead of `LR`, `BT` instead of `TB`). It can be overridden per image in the UI.
 - `eye_aspect`: explicit aspect ratio of one eye; when `null`, it is derived from the image size.
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
@@ -75,23 +77,27 @@ Open `config.json`:
 | `half` | two side-by-side halves, each compressed horizontally | `W/H` |
 | `ou` | two stacked halves, no compression | `W/H × 2` |
 | `hou` | two stacked halves, each compressed vertically by 2 | `W/H` |
+| `pano` | 360° panorama, no stereo pair: the viewer is inside a sphere or cylinder | whole texture |
 
-Every layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry.
+Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture on a dedicated sphere/cylinder mesh.
 
-With `sbs: "auto"` each image is classified using three signals:
+With `sbs: "auto"` each image is classified using several signals:
 
-1. **filename** — tokens like `sbs`, `half`, `hou`, `ou`, `tab`, `lr`, `rl`, `tb`, `bt`, `2d` (the strongest signal; `rl`/`bt` also enable `swap`);
-2. **aspect ratio** — very wide files (`≥ 2.4`) are almost always full-SBS, very tall ones (`≤ 1.05`) are Full-OU. The remaining range is split as follows: `1.05–1.35` — half-SBS with portrait eyes (1536×1280), `1.35–1.6` — portrait full-SBS (1920×1280), `1.6–2.4` — regular 16:9 half-SBS;
-3. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared. Horizontal edges are compared instead of raw brightness, with a small horizontal shift search: this handles real disparity between the eyes and avoids false matches on repeating textures.
+1. **standard 360 metadata** — Google Photo Sphere XMP (`GPano:UsePanoramaViewer`, `GPano:ProjectionType=equirectangular`, `ns.google.com/photos/1.0/panorama`) or `360` / `pano` / `equirect` filename tokens immediately give `pano`. ComfyUI workflow nodes are **ignored**: the same result can be produced by different nodes, so they are not a format signal;
+2. **filename** — tokens like `sbs`, `half`, `hou`, `ou`, `tab`, `lr`, `rl`, `tb`, `bt`, `2d` (the strongest signal; `rl`/`bt` also enable `swap`);
+3. **aspect ratio** — very wide files (`≥ 2.4`) are almost always full-SBS, very tall ones (`≤ 1.05`) are Full-OU. The remaining range is split as follows: `1.05–1.35` — half-SBS with portrait eyes (1536×1280), `1.35–1.6` — portrait full-SBS (1920×1280), `1.6–2.4` — regular 16:9 half-SBS;
+4. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared. Horizontal edges are compared instead of raw brightness, with a small horizontal shift search: this handles real disparity between the eyes and avoids false matches on repeating textures;
+5. **seamless 360 without metadata** — with no XMP and no filename hint, an aspect near 2:1 plus matching left/right edges and no half similarity means a panorama. Aspect 2:1 alone is not enough: full-SBS often has the same dimensions.
 
 The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block has two dropdowns:
 
 - **For directory** — auto-detect by default. Choosing a concrete layout applies it to **every image of the source** and saves it in `state.json` as `layoutDefault[rootId]`. Switching back to auto-detect removes the setting.
-- **For image** — a per-file override, plus a **Swap eyes** checkbox. **From directory** removes the override.
+- **For image** — a per-file override, plus a **Swap eyes** checkbox (disabled for 2D and 360). **From directory** removes the override.
+- **360° projection** — **Sphere** or **Cylinder**. Active when the current file is detected as a panorama; the choice is saved for the directory.
 
 Priority: **image override → directory layout → `config.json` → auto-detection**. The directory setting is a safety net for folders where every photo uses the same format but the detector gets it wrong.
 
-The same rules apply to **thumbnails**: the 2D grid and the VR gallery show a single eye with correct cropping instead of the whole file. Thumbnails are redrawn when the directory or image layout changes, and the refined result from opening the full image is applied back to its thumbnail. Rendering is lazy — only thumbnails near the visible grid area are drawn.
+The same rules apply to **thumbnails**: the 2D grid and the VR gallery show a single eye with correct cropping instead of the whole file (for a 360 panorama — the whole 2:1 frame). Thumbnails are redrawn when the directory or image layout changes, and the refined result from opening the full image is applied back to its thumbnail. Rendering is lazy — only thumbnails near the visible grid area are drawn.
 
 ### 2. Generate a certificate
 
@@ -138,7 +144,7 @@ The QR encodes the same address that is used for the certificate. If the IP chan
 
 ### Example directory
 
-The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. For detection tests there are `08_big_disparity.jpg` (large disparity), `09_pair_1536.jpg` (vertical 1536×1280 half pair with no hint in the name), `11_pair_1920.jpg` (vertical 1920×1280 full-SBS) and `10_plain_1536.jpg` (an ordinary photo of the same size as a control). The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
+The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. For detection tests there are `08_big_disparity.jpg` (large disparity), `09_pair_1536.jpg` (vertical 1536×1280 half pair with no hint in the name), `11_pair_1920.jpg` (vertical 1920×1280 full-SBS) and `10_plain_1536.jpg` (an ordinary photo of the same size as a control). For 360 there is `12_pano_360.png` — an equirectangular 2:1 image with standard GPano XMP metadata. The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
 
 You can regenerate the pictures with `python tools/make_examples.py` (requires Pillow).
 
@@ -162,6 +168,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
    - **Trigger + thumbstick** — pan across the frame: the photo moves **in the same direction you push the stick** (up → up, right → right). The effect is visible at 1× and grows with zoom. Pan values are saved together with zoom and curvature;
    - **Grip/squeeze + thumbstick ↔** — stereo shift for the right eye (−10%…+10% of one eye's width), useful when the SBS views drift apart. **Grip + thumbstick ↑↓** still sets the bend from 0–100%. While grip is held, the stick does not browse photos;
    - **A button** — toggle a mark on the current photo. A marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint;
+   - **For a 360 panorama** just turn your head — the view follows the headset orientation. The stick browses photos left/right and zooms up/down; **trigger + stick** pans longitude/latitude (seamless across the wrap). Stereo shift and screen curvature are not used for panoramas: the hint shows **Look around** and the current projection instead;
    - **Press the thumbstick** or the **B/Y** button — open the 3D gallery. Trigger and grip alone no longer browse photos in photo mode.
 
    **3D gallery**
@@ -213,13 +220,13 @@ Each file is a flat key → string map. `__name` is the language name shown in t
 }
 ```
 
-The panel under the photo is drawn from the keys `vrHintPhoto`, `vrHintNavKeys`, `vrHintZoom`, `vrHintZoomKeys`, `vrHintMark`, `vrHintMarkKeys`, `vrHintPan`, `vrHintPanKeys`, `vrHintShift`, `vrHintShiftKeys`, `vrHintCurve`, `vrHintCurveKeys`, `vrHintGallery`, `vrHintGalleryKeys`. If you only translate `vrLabelHint` (as in the example above), the hint is drawn as a single auto-wrapped line — older language files keep working.
+The panel under the photo is drawn from the keys `vrHintPhoto`, `vrHintNavKeys`, `vrHintZoom`, `vrHintZoomKeys`, `vrHintMark`, `vrHintMarkKeys`, `vrHintPan`, `vrHintPanKeys`, `vrHintShift`, `vrHintShiftKeys`, `vrHintCurve`, `vrHintCurveKeys`, `vrHintLook`, `vrHintLookKeys`, `vrHintGallery`, `vrHintGalleryKeys`. For panoramas, **Look around** and the current projection are shown instead of stereo shift and curvature. If you only translate `vrLabelHint` (as in the example above), the hint is drawn as a single auto-wrapped line — older language files keep working.
 
 Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
 
 **Russian convention.** In all Russian texts in this project — docs, `web/i18n/ru.json`, UI strings and comments — write `е` instead of `ё`: `все`, `желтый`, `раздает`, `сохраненное`.
 
-Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, the directory layout, per-image layout overrides, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
+Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, the directory layout, per-image layout overrides, the 360 projection mode, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
 ## Roadmap
 
@@ -263,7 +270,7 @@ web/index.html     — 2D file browser and Enter VR button
 web/app.js         — layout loading and detection, WebGL rendering, WebXR session, input
 web/style.css
 web/i18n/*.json    — translation files (one file per language)
-state.json         — saved zoom/curve/view per directory, directory and per-image layouts, language and source (do not commit)
+state.json         — saved zoom/curve/view per directory, directory and per-image layouts, 360 projection mode, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 LICENSE            — MIT license

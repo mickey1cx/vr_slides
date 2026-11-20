@@ -25,6 +25,9 @@ const BAR_WIDTH = 0.035;
 const STICK_DEAD = 0.6;
 const STICK_REPEAT = 320; // мс между повторами при удержании
 const PHOTO_SEGMENTS = 64; // сегменты по горизонтали для изогнутого экрана
+const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
+const PANO_LON = 48; // сегменты по долготе
+const PANO_LAT = 24; // сегменты по широте
 const CURVE_STEP = 0.08; // шаг изменения изгиба за один повтор стика
 // Значения по умолчанию; сервер может переопределить их блоком "controls" в config.json.
 const DEFAULT_CONTROLS = {
@@ -37,9 +40,10 @@ const DEFAULT_CONTROLS = {
   panGain: 1.0,       // дополнительное смещение при зуме
 };
 // Поддерживаемые раскладки стереопары. auto — определить формат по файлу.
-const LAYOUT_TYPES = ['mono', 'sbs', 'half', 'ou', 'hou', 'auto'];
+const LAYOUT_TYPES = ['mono', 'sbs', 'half', 'ou', 'hou', 'pano', 'auto'];
 const LAYOUT_ALIASES = {
   '2d': 'mono', flat: 'mono',
+  '360': 'pano', panorama: 'pano', equirect: 'pano', equirectangular: 'pano', sphere: 'pano',
   full: 'sbs', lr: 'sbs', rl: 'sbs', stereo: 'sbs', '3d': 'sbs',
   'side-by-side': 'sbs', sidebyside: 'sbs', 'full-sbs': 'sbs', fullsbs: 'sbs',
   hsbs: 'half', 'half-sbs': 'half', 'sbs-half': 'half', halfsbs: 'half', sbshalf: 'half', 'half-side': 'half',
@@ -49,7 +53,7 @@ const LAYOUT_ALIASES = {
 };
 const LAYOUT_LABEL_KEYS = {
   mono: 'layoutMono', sbs: 'layoutSbs', half: 'layoutHalf',
-  ou: 'layoutOu', hou: 'layoutHou', auto: 'layoutAuto',
+  ou: 'layoutOu', hou: 'layoutHou', pano: 'layoutPano', auto: 'layoutAuto',
 };
 
 function normaliseLayout(value) {
@@ -128,6 +132,7 @@ const state = {
   view: { panX: 0, panY: 0, shift: 0 },
   layoutByRoot: {}, // ручные переопределения формата: root -> rel -> {type, swap}
   layoutDefaultByRoot: {}, // формат всего каталога: root -> тип (по умолчанию авто)
+  panoModeByRoot: {}, // 360-проекция каталога: root -> sphere | cylinder
   layoutCache: {}, // кэш автоопределения: root|rel|ширина -> результат
   confirmedLayout: {}, // формат, уже определенный по полному изображению
   thumbObserver: null, // ленивая отрисовка эскизов 2D-галереи
@@ -147,6 +152,10 @@ const state = {
   photoVbo: null,
   photoData: null,
   photoVertexCount: 0,
+  sphereVbo: null,
+  sphereVertexCount: 0,
+  cylinderVbo: null,
+  cylinderVertexCount: 0,
   texPhoto: null,
   texLabel: null,
   texWhite: null,
@@ -300,6 +309,7 @@ async function loadImage(url) {
 function nameLayout(name) {
   const n = String(name || '').toLowerCase().replace(/[_.\s]+/g, '-').replace(/[^a-z0-9-]/g, '-');
   const rules = [
+    [/(^|-)(pano|panorama|equirect|equirectangular|360)(-|$)/, 'pano'],
     [/(^|-)half-?ou(-|$)|(^|-)hou(-|$)|(^|-)half-?tab(-|$)|(^|-)htab(-|$)/, 'hou'],
     [/(^|-)full-?ou(-|$)|(^|-)fou(-|$)|(^|-)top-?bottom(-|$)|(^|-)tab(-|$)|(^|-)tb(-|$)|(^|-)ou(-|$)/, 'ou'],
     [/(^|-)half-?sbs(-|$)|(^|-)sbs-?half(-|$)|(^|-)hsbs(-|$)|(^|-)half-?side(-|$)/, 'half'],
@@ -395,14 +405,53 @@ function halfCorrelation(img, vertical) {
   return best;
 }
 
+// Панорама 360 безшовна: левый и правый края должны стыковаться. Сравниваем
+// перепад на шве со средним горизонтальным градиентом — у обычного фото шов
+// в несколько раз резче, у SBS по шву еще и проходит граница половин.
+function panoSeamRatio(img) {
+  const w = 96;
+  const h = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return Infinity;
+  ctx.drawImage(img, 0, 0, w, h);
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return Infinity;
+  }
+  const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) lum[y * w + x] = luminance(data, x, y, w);
+  }
+  let seam = 0;
+  let grad = 0;
+  for (let y = 0; y < h; y++) {
+    seam += Math.abs(lum[y * w] - lum[y * w + w - 1]);
+    for (let x = 1; x < w; x++) grad += Math.abs(lum[y * w + x] - lum[y * w + x - 1]);
+  }
+  return (seam * (w - 1)) / (grad + 1e-6);
+}
+
 function corrScore(value) {
   return Math.max(0, Math.min(1, (value - 0.25) / 0.35));
 }
 
-function detectLayout(img, name) {
+function detectLayout(img, name, filePano = false) {
   const aspect = img.width / img.height;
   const hint = nameLayout(name);
   const swap = nameSwap(name);
+  // Стандартные метаданные GPano и имя файла — сильные подсказки. Узлы ComfyUI
+  // не учитываем: это лишь способ генерации, а не признак формата.
+  if (filePano || hint === 'pano') {
+    return {
+      type: 'pano', swap: false, confidence: 100,
+      source: filePano ? 'metadata' : 'name', sbsCorr: 0, ouCorr: 0,
+    };
+  }
   const sbsCorr = halfCorrelation(img, false);
   const ouCorr = halfCorrelation(img, true);
   const wide = aspect >= 2.4;
@@ -414,6 +463,11 @@ function detectLayout(img, name) {
   const portraitSbs = aspect >= 1.35 && aspect <= 1.6;
   const cs = corrScore(sbsCorr);
   const co = corrScore(ouCorr);
+  // Метаданных может не быть: 2:1 + безшовные края + отсутствие сходства
+  // половин надежно отделяет equirectangular от full-SBS и обычного фото.
+  if (!hint && Math.abs(aspect - 2) <= 0.2 && cs < 0.2 && panoSeamRatio(img) < 1.8) {
+    return { type: 'pano', swap: false, confidence: 85, source: 'content', sbsCorr, ouCorr };
+  }
   const sbsAspect = wide || portraitSbs ? 0.35 : (aspect > 1.6 ? 0.2 : 0);
   const halfAspect = normal && !portraitSbs ? 0.35 : 0;
   const ouAspect = tall ? 0.35 : 0;
@@ -450,7 +504,7 @@ function effectiveLayout(entry, img) {
   if (type === 'auto') {
     // Миниатюра и полное изображение могут дать разные результаты — держим их отдельно.
     const key = `${state.rootId}|${entry.path}|${img.width}`;
-    detected = state.layoutCache[key] || detectLayout(img, entry.name);
+    detected = state.layoutCache[key] || detectLayout(img, entry.name, !!entry?.pano);
     state.layoutCache[key] = detected;
     type = detected.type;
     if (detected.swap !== null && typeof override?.swap !== 'boolean') swap = detected.swap;
@@ -474,6 +528,7 @@ async function init() {
   state.viewByRoot = saved.view || {};
   state.layoutByRoot = saved.layout || {};
   state.layoutDefaultByRoot = saved.layoutDefault || {};
+  state.panoModeByRoot = saved.panoMode || {};
 
   const langSelect = $('#langSelect');
   for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
@@ -511,6 +566,7 @@ async function init() {
 
   $('#layoutDirSelect').addEventListener('change', () => saveLayoutDefault().catch(showError));
   $('#layoutSelect').addEventListener('change', () => saveLayoutOverride().catch(showError));
+  $('#panoModeSelect').addEventListener('change', () => savePanoMode().catch(showError));
   $('#layoutSwap').addEventListener('change', () => saveLayoutOverride().catch(showError));
 
   $('#upBtn').addEventListener('click', () => {
@@ -807,15 +863,20 @@ function updateLayoutUI(entry, layout) {
   const dirSelect = $('#layoutDirSelect');
   const select = $('#layoutSelect');
   const swap = $('#layoutSwap');
+  const panoSelect = $('#panoModeSelect');
   const info = $('#layoutInfo');
   const active = !!entry && !!layout;
   if (dirSelect) dirSelect.value = state.layoutDefaultByRoot[state.rootId] || 'auto';
+  if (panoSelect) {
+    panoSelect.value = panoMode();
+    panoSelect.disabled = !active || layout.type !== 'pano';
+  }
   if (select) {
     select.disabled = !active;
     select.value = active ? (layout.override?.type || 'root') : 'root';
   }
   if (swap) {
-    swap.disabled = !active || layout.type === 'mono';
+    swap.disabled = !active || layout.type === 'mono' || layout.type === 'pano';
     swap.checked = active ? layout.swap : false;
   }
   if (info) {
@@ -846,6 +907,15 @@ async function saveLayoutDefault() {
   const entry = state.entries[state.current];
   if (entry && entry.type === 'image') await loadPhoto(entry);
   refreshThumbs();
+}
+
+async function savePanoMode() {
+  const value = $('#panoModeSelect')?.value || 'sphere';
+  state.panoModeByRoot[state.rootId] = value;
+  await saveState({ root: state.rootId, panoMode: value });
+  refreshThumbs();
+  const entry = state.entries[state.current];
+  if (state.gl && entry) updateLabel(entry);
 }
 
 async function saveLayoutOverride() {
@@ -914,6 +984,51 @@ function compile(gl, type, source) {
   return shader;
 }
 
+// Сетки для 360 строятся один раз: вершины несут позицию и UV, поэтому
+// используются те же атрибуты и тот же шейдер, что и у обычного фото.
+function buildPanoMeshes(gl) {
+  const spherePoint = (j, i) => {
+    const theta = Math.PI / 2 - (j / PANO_LAT) * Math.PI;
+    const u = i / PANO_LON;
+    const phi = (u - 0.5) * Math.PI * 2;
+    return [
+      PANO_RADIUS * Math.cos(theta) * Math.sin(phi),
+      PANO_RADIUS * Math.sin(theta),
+      -PANO_RADIUS * Math.cos(theta) * Math.cos(phi),
+      u, 1 - j / PANO_LAT,
+    ];
+  };
+  // TRIANGLE_STRIP должен чередовать вершины двух соседних широт: если вывести
+  // всю строку целиком, валидным будет только один треугольник на стыке строк.
+  const sphere = [];
+  for (let j = 0; j < PANO_LAT; j++) {
+    for (let k = 0; k <= PANO_LON; k++) {
+      const i = (j % 2 === 0) ? k : (PANO_LON - k);
+      sphere.push(...spherePoint(j, i), ...spherePoint(j + 1, i));
+    }
+  }
+  state.sphereVertexCount = sphere.length / 5;
+  state.sphereVbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.sphereVbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sphere), gl.STATIC_DRAW);
+
+  // Цилиндр — та же картинка, замкнутая вокруг пользователя, без полярных точек.
+  // Высота рассчитана на aspect 2; для другого aspect ее масштабирует модель.
+  const halfH = (Math.PI * PANO_RADIUS) / 2;
+  const cylinder = [];
+  for (let i = 0; i <= PANO_LON; i++) {
+    const u = i / PANO_LON;
+    const phi = (u - 0.5) * Math.PI * 2;
+    const x = PANO_RADIUS * Math.sin(phi);
+    const z = -PANO_RADIUS * Math.cos(phi);
+    cylinder.push(x, halfH, z, u, 1, x, -halfH, z, u, 0);
+  }
+  state.cylinderVertexCount = cylinder.length / 5;
+  state.cylinderVbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.cylinderVbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(cylinder), gl.STATIC_DRAW);
+}
+
 function initGL(gl) {
   const vs = `
     attribute vec3 aPos;
@@ -921,6 +1036,7 @@ function initGL(gl) {
     uniform mat4 uMVP;
     uniform vec2 uUvOffset;
     uniform vec2 uUvScale;
+    uniform float uWrap;
     varying vec2 vUv;
     void main() {
       vUv = uUvOffset + aUv * uUvScale;
@@ -930,9 +1046,14 @@ function initGL(gl) {
     precision mediump float;
     uniform sampler2D uTex;
     uniform vec3 uTint;
+    uniform float uWrap;
     varying vec2 vUv;
     void main() {
-      gl_FragColor = vec4(texture2D(uTex, vUv).rgb * uTint, 1.0);
+      // Долгота замыкается во фрагментном шейдере: если брать fract в вершинах,
+      // на шве интерполяция проходит через всю текстуру и дает разрыв.
+      vec2 uv = vUv;
+      if (uWrap > 0.5) uv.x = fract(uv.x);
+      gl_FragColor = vec4(texture2D(uTex, uv).rgb * uTint, 1.0);
     }`;
 
   const program = gl.createProgram();
@@ -949,6 +1070,7 @@ function initGL(gl) {
     uMVP: gl.getUniformLocation(program, 'uMVP'),
     uUvOffset: gl.getUniformLocation(program, 'uUvOffset'),
     uUvScale: gl.getUniformLocation(program, 'uUvScale'),
+    uWrap: gl.getUniformLocation(program, 'uWrap'),
     uTint: gl.getUniformLocation(program, 'uTint'),
     uTex: gl.getUniformLocation(program, 'uTex'),
   };
@@ -973,6 +1095,7 @@ function initGL(gl) {
   state.photoVbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, state.photoVbo);
   gl.bufferData(gl.ARRAY_BUFFER, state.photoData.byteLength, gl.DYNAMIC_DRAW);
+  buildPanoMeshes(gl);
 
   state.texPhoto = makeTexture(gl);
   state.texLabel = makeTexture(gl);
@@ -1089,7 +1212,7 @@ function uploadMarkTexture(gl) {
   uploadImage(gl, tex, canvas);
 }
 
-function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4) {
+function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4, wrap = 0) {
   gl.useProgram(state.program);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -1103,6 +1226,7 @@ function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, 
   gl.uniform2fv(state.loc.uUvScale, uvScale);
   gl.uniform3fv(state.loc.uTint, tint);
   gl.uniform1i(state.loc.uTex, 0);
+  gl.uniform1f(state.loc.uWrap, wrap);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, count);
 }
 
@@ -1150,6 +1274,48 @@ function drawCurvedPhoto(gl, proj, viewM, uvOffset, uvScale, model) {
     gl, state.texPhoto, multiply(proj, multiply(viewM, model)), uvOffset, uvScale,
     [1, 1, 1], state.photoVbo, state.photoVertexCount,
   );
+}
+
+function normalisePanoMode(value) {
+  const key = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+  if (key === 'sphere' || key === 'spherical' || key === '360') return 'sphere';
+  if (key === 'cylinder' || key === 'cylindrical' || key === 'cyl' || key === 'wrap') return 'cylinder';
+  return null;
+}
+
+function panoMode() {
+  const saved = normalisePanoMode(state.panoModeByRoot[state.rootId]);
+  if (saved) return saved;
+  return normalisePanoMode(rootCfg().pano_mode) || 'sphere';
+}
+
+// Панораму смотрим изнутри: сфера для equirectangular, цилиндр для «замкнутой
+// плоской картинки». Зум приближает центр текстуры, панорама сдвигает долготу.
+function drawPano(gl, proj, viewM) {
+  const s = clamp(1 / state.zoom, 0.1, 1);
+  const base = (1 - s) / 2;
+  const uOffset = base + state.view.panX * 0.5 * s;
+  const vOffset = clamp(base + state.view.panY * 0.5 * s, 0, 1 - s);
+  const cylinder = panoMode() === 'cylinder';
+  const model = cylinder ? scale(1, 2 / (state.aspect || 2), 1) : null;
+  const mvp = model ? multiply(proj, multiply(viewM, model)) : multiply(proj, viewM);
+  draw(
+    gl, state.texPhoto, mvp, [uOffset, vOffset], [s, s], [1, 1, 1],
+    cylinder ? state.cylinderVbo : state.sphereVbo,
+    cylinder ? state.cylinderVertexCount : state.sphereVertexCount,
+    1,
+  );
+}
+
+// В панораме нет угла кадра, поэтому метка и подпись висят в поле зрения.
+function drawPanoOverlay(gl, proj) {
+  const entry = state.entries[state.current];
+  if (entry && state.selected.has(entry.path)) {
+    const mark = multiply(proj, multiply(translate(0.42, 0.24, -1), scale(0.08, 0.08, 1)));
+    draw(gl, state.texMark, mark, [0, 0], [1, 1]);
+  }
+  const label = multiply(proj, multiply(translate(0, -0.42, -1), scale(1.1, 0.27, 1)));
+  draw(gl, state.texLabel, label, [0, 0], [1, 1]);
 }
 
 // Строка подсказки: серый заголовок блока и яркое значение.
@@ -1221,8 +1387,13 @@ function updateLabel(entry) {
     drawHintRow(ctx, left, 142, 'vrHintZoom', `${t('vrHintZoomKeys')} ${vars.zoom}×`);
     drawHintRow(ctx, left, 178, 'vrHintMark', t('vrHintMarkKeys'));
     drawHintRow(ctx, right, 106, 'vrHintPan', `${t('vrHintPanKeys')} ${vars.panX}/${vars.panY}`);
-    drawHintRow(ctx, right, 142, 'vrHintShift', `${t('vrHintShiftKeys')} ${vars.shift}%`);
-    drawHintRow(ctx, right, 178, 'vrHintCurve', `${t('vrHintCurveKeys')} ${vars.curve}%`);
+    if (state.photoLayout?.type === 'pano') {
+      drawHintRow(ctx, right, 142, 'vrHintLook', t('vrHintLookKeys'));
+      drawHintRow(ctx, right, 178, 'panoProjection', t(panoMode() === 'cylinder' ? 'panoCylinder' : 'panoSphere'));
+    } else {
+      drawHintRow(ctx, right, 142, 'vrHintShift', `${t('vrHintShiftKeys')} ${vars.shift}%`);
+      drawHintRow(ctx, right, 178, 'vrHintCurve', `${t('vrHintCurveKeys')} ${vars.curve}%`);
+    }
     drawHintRow(ctx, left, 222, 'vrHintGallery', t('vrHintGalleryKeys'));
   }
   uploadImage(state.gl, state.texLabel, canvas);
@@ -1372,7 +1543,8 @@ function photoPanModel() {
 
 function photoEyeModel(right) {
   const pan = photoPanModel();
-  if (!right || !state.view.shift || state.photoLayout.type === 'mono') return pan;
+  if (!right || !state.view.shift ||
+      state.photoLayout.type === 'mono' || state.photoLayout.type === 'pano') return pan;
   const halfW = (state.height * state.aspect) / 2;
   return multiply(pan, translate(state.view.shift * halfW, 0, 0));
 }
@@ -1945,6 +2117,12 @@ function onFrame(time, frame) {
 
     if (state.mode === 'gallery') {
       renderGallery(gl, proj, viewM);
+      continue;
+    }
+
+    if (state.photoLayout.type === 'pano') {
+      drawPano(gl, proj, viewM);
+      drawPanoOverlay(gl, proj);
       continue;
     }
 

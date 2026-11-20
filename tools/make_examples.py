@@ -8,7 +8,7 @@
 import random
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 OUT = Path(__file__).resolve().parent.parent / "example"
 EYE_W, EYE_H = 960, 540
@@ -132,6 +132,48 @@ def main() -> None:
     paste(img, near, (0, 0, 960, 1280))
     paste(img, far, (960, 0, 1920, 1280))
     save(img, "11_pair_1920.jpg")
+
+    # Равносторонняя 360-панорама со стандартными метаданными Google Photo Sphere.
+    # Края сделаны идентичными — этот же файл проверяет и контентный детектор.
+    pano = equirect_image()
+    xmp = (
+        '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '<rdf:Description rdf:about="" '
+        'xmlns:GPano="http://ns.google.com/photos/1.0/panorama/">'
+        '<GPano:UsePanoramaViewer>True</GPano:UsePanoramaViewer>'
+        '<GPano:ProjectionType>equirectangular</GPano:ProjectionType>'
+        '</rdf:Description></rdf:RDF></x:xmpmeta>'
+        '<?xpacket end="w"?>'
+    )
+    info = PngImagePlugin.PngInfo()
+    info.add_text("XML:com.adobe.xmp", xmp)
+    path = OUT / "12_pano_360.png"
+    pano.save(path, "PNG", pnginfo=info, optimize=True)
+    print(path.relative_to(OUT.parent))
+
+
+def equirect_image() -> Image.Image:
+    """Синтетическая equirectangular-панорама 2:1 с безшовными краями."""
+    w, h = 1024, 512
+    img = Image.new("RGB", (w, h))
+    d = ImageDraw.Draw(img)
+    top, bottom = (48, 96, 150), (26, 30, 38)
+    for y in range(h):
+        t = y / (h - 1)
+        color = tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3))
+        d.line((0, y, w, y), fill=color)
+    for x in range(32, w, 64):
+        d.line((x, 0, x, h - 1), fill=(170, 185, 205), width=2)
+    for y in range(64, h, 64):
+        d.line((0, y, w - 1, y), fill=(170, 185, 205), width=2)
+    d.text((24, 24), "360 EQUIRECTANGULAR", fill=(255, 255, 255), font=FONT)
+    px = img.load()
+    for y in range(h):
+        px[w - 1, y] = px[0, y]
+        px[w - 2, y] = px[1, y]
+    return img
 
 
 if __name__ == "__main__":
