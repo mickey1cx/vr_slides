@@ -97,6 +97,7 @@ const state = {
   viewSaveTimer: null,
   view: { panX: 0, panY: 0, shift: 0 },
   layoutByRoot: {}, // ручные переопределения формата: root -> rel -> {type, swap}
+  layoutDefaultByRoot: {}, // формат всего каталога: root -> тип (по умолчанию авто)
   layoutCache: {}, // кэш автоопределения: root|rel -> результат
   photoLayout: { type: 'sbs', swap: false, detected: null, rootType: 'sbs', override: null },
   photoLayoutEntry: '',
@@ -227,6 +228,13 @@ function showError(err) {
 
 function rootCfg() {
   return state.config.roots.find((r) => r.id === state.rootId) || {};
+}
+
+// Формат каталога: сохраненная настройка интерфейса перекрывает config.json.
+function directoryLayoutType() {
+  const saved = normaliseLayout(state.layoutDefaultByRoot[state.rootId]);
+  if (saved && saved !== 'auto') return saved;
+  return normaliseLayout(rootCfg().sbs) || 'auto';
 }
 
 function imageUrl(entry) {
@@ -402,7 +410,7 @@ function detectLayout(img, name) {
 
 function effectiveLayout(entry, img) {
   const rc = rootCfg();
-  const rootType = normaliseLayout(rc.sbs) || 'sbs';
+  const rootType = directoryLayoutType();
   const override = state.layoutByRoot[state.rootId]?.[entry?.path] || null;
   let type = override?.type || rootType;
   let swap = typeof override?.swap === 'boolean' ? override.swap : !!rc.swap;
@@ -432,6 +440,7 @@ async function init() {
   state.curveByRoot = saved.curve || {};
   state.viewByRoot = saved.view || {};
   state.layoutByRoot = saved.layout || {};
+  state.layoutDefaultByRoot = saved.layoutDefault || {};
 
   const langSelect = $('#langSelect');
   for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
@@ -467,6 +476,7 @@ async function init() {
   }
   $('#resetViewBtn').addEventListener('click', resetView);
 
+  $('#layoutDirSelect').addEventListener('change', () => saveLayoutDefault().catch(showError));
   $('#layoutSelect').addEventListener('change', () => saveLayoutOverride().catch(showError));
   $('#layoutSwap').addEventListener('change', () => saveLayoutOverride().catch(showError));
 
@@ -695,7 +705,7 @@ function jumpToEdge(direction) {
 function updateInfo(entry) {
   if (!entry) return;
   const layout = state.photoLayoutEntry === entry.path ? state.photoLayout : null;
-  const type = layout?.type || normaliseLayout(rootCfg().sbs) || 'sbs';
+  const type = layout?.type || directoryLayoutType();
   $('#info').textContent = t('info', {
     name: entry.name,
     width: entry.width || '?',
@@ -737,10 +747,12 @@ async function loadPhoto(entry) {
 }
 
 function updateLayoutUI(entry, layout) {
+  const dirSelect = $('#layoutDirSelect');
   const select = $('#layoutSelect');
   const swap = $('#layoutSwap');
   const info = $('#layoutInfo');
   const active = !!entry && !!layout;
+  if (dirSelect) dirSelect.value = state.layoutDefaultByRoot[state.rootId] || 'auto';
   if (select) {
     select.disabled = !active;
     select.value = active ? (layout.override?.type || 'root') : 'root';
@@ -758,11 +770,23 @@ function updateLayoutUI(entry, layout) {
     if (layout.detected) {
       const source = t(`layoutSource${layout.detected.source[0].toUpperCase()}${layout.detected.source.slice(1)}`);
       parts.push(t('layoutDetected', { source, confidence: layout.detected.confidence }));
-    } else if (layout.override?.type === 'root') {
-      parts.push(t('layoutFromRoot'));
+    } else if (layout.override?.type) {
+      parts.push(t('layoutPinned'));
+    } else {
+      parts.push(t('layoutDirPinned'));
     }
     info.textContent = parts.join(' · ');
   }
+}
+
+async function saveLayoutDefault() {
+  const value = $('#layoutDirSelect')?.value || 'auto';
+  if (value === 'auto') delete state.layoutDefaultByRoot[state.rootId];
+  else state.layoutDefaultByRoot[state.rootId] = value;
+  await saveState({ root: state.rootId, layoutDefault: value === 'auto' ? null : value });
+  // Пересчитать aspect и UV текущей картинки с новым форматом каталога.
+  const entry = state.entries[state.current];
+  if (entry && entry.type === 'image') await loadPhoto(entry);
 }
 
 async function saveLayoutOverride() {

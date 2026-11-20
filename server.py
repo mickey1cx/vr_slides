@@ -59,7 +59,10 @@ if sys.platform == "win32":
         ]
 
 CONFIG: dict = {}
-STATE: dict = {"zoom": {}, "curve": {}, "view": {}, "layout": {}, "lang": None, "root": None}
+STATE: dict = {
+    "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
+    "lang": None, "root": None,
+}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 QR_PNG: bytes | None = None
@@ -380,7 +383,7 @@ def config_payload() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Состояние (зум/изгиб/вид по каталогам, выбранный язык)
+# Состояние (зум/изгиб/вид/форматы по каталогам, выбранный язык)
 # ---------------------------------------------------------------------------
 
 def load_state() -> None:
@@ -458,18 +461,33 @@ def load_state() -> None:
                             result[root_id] = clean
                     return result
 
+                def clean_layout_defaults(raw):
+                    result = {}
+                    if isinstance(raw, dict):
+                        for root_id, value in raw.items():
+                            if root_id not in root_ids:
+                                continue
+                            layout_type = normalise_layout(value)
+                            if layout_type:
+                                result[root_id] = layout_type
+                    return result
+
                 STATE = {
                     "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
                     "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
                     "view": clean_views(data.get("view")),
                     "layout": clean_layouts(data.get("layout")),
+                    "layoutDefault": clean_layout_defaults(data.get("layoutDefault")),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
             return
         except (OSError, ValueError):
             pass
-    STATE = {"zoom": {}, "curve": {}, "view": {}, "layout": {}, "lang": None, "root": None}
+    STATE = {
+        "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
+        "lang": None, "root": None,
+    }
 
 
 def save_state() -> None:
@@ -604,6 +622,21 @@ class Handler(BaseHTTPRequestHandler):
                         number = round(min(high, max(low, float(raw_view[key]))), digits)
                         if view.get(key) != number:
                             view[key] = number
+                            changed = True
+                if "layoutDefault" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешен
+                    raw_default = payload["layoutDefault"]
+                    defaults = STATE.setdefault("layoutDefault", {})
+                    if raw_default is None or raw_default == "auto":
+                        if defaults.pop(root_id, None) is not None:
+                            changed = True
+                    else:
+                        layout_type = normalise_layout(raw_default)
+                        if not layout_type:
+                            raise ValueError("Неизвестный тип стереоформата")
+                        if defaults.get(root_id) != layout_type:
+                            defaults[root_id] = layout_type
                             changed = True
                 if "layout" in payload:
                     root_id = str(payload.get("root", ""))
