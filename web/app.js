@@ -490,7 +490,7 @@ async function init() {
   $('#firstBtn').addEventListener('click', () => jumpToEdge(-1));
   $('#lastBtn').addEventListener('click', () => jumpToEdge(1));
   $('#deleteBtn').addEventListener('click', () => deleteSelected().catch(showError));
-  $('#markBtn').addEventListener('click', () => markCurrentOrHovered());
+  $('#markBtn')?.addEventListener('click', () => markCurrentOrHovered());
 
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));

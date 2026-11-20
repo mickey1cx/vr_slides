@@ -141,7 +141,7 @@ main {
   border-color: #ffd34d;
 }
 .card.picked { border-color: #ffd34d; }
-#markBtn.picked { border-color: #ffd34d; color: #ffe08a; }
+button.primary + fieldset { margin-top: 12px; }
 .card .thumb {
   width: 100%;
   aspect-ratio: 2 / 1;
