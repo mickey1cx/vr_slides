@@ -178,6 +178,8 @@ Each file is a flat key → string map. `__name` is the language name shown in t
 
 Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
 
+**Russian convention.** In all Russian texts in this project — docs, `web/i18n/ru.json`, UI strings and comments — write `е` instead of `ё`: `все`, `желтый`, `раздает`, `сохраненное`.
+
 Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
 ## Roadmap
