@@ -61,15 +61,16 @@ if sys.platform == "win32":
 CONFIG: dict = {}
 STATE: dict = {
     "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
-    "lang": None, "root": None,
+    "panoMode": {}, "lang": None, "root": None,
 }
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 QR_PNG: bytes | None = None
 
-LAYOUT_TYPES = {"mono", "sbs", "half", "ou", "hou", "auto"}
+LAYOUT_TYPES = {"mono", "sbs", "half", "ou", "hou", "pano", "auto"}
 LAYOUT_ALIASES = {
     "2d": "mono", "flat": "mono",
+    "360": "pano", "panorama": "pano", "equirect": "pano", "equirectangular": "pano", "sphere": "pano",
     "full": "sbs", "lr": "sbs", "rl": "sbs", "stereo": "sbs", "3d": "sbs",
     "side-by-side": "sbs", "sidebyside": "sbs", "full-sbs": "sbs", "fullsbs": "sbs",
     "hsbs": "half", "half-sbs": "half", "sbs-half": "half", "halfsbs": "half", "sbshalf": "half", "half-side": "half",
@@ -114,6 +115,20 @@ def normalise_layout(value) -> str | None:
     return LAYOUT_ALIASES.get(key)
 
 
+PANO_MODES = {"sphere", "cylinder"}
+
+
+def normalise_pano_mode(value) -> str | None:
+    key = str(value or "").strip().lower().replace("_", "-")
+    if key in PANO_MODES:
+        return key
+    if key in {"spherical", "360"}:
+        return "sphere"
+    if key in {"cyl", "cylindrical", "wrap"}:
+        return "cylinder"
+    return None
+
+
 def valid_rel(value) -> bool:
     """Проверка относительного пути картинки для карты ручных переопределений."""
     if not isinstance(value, str) or not value or len(value) > 512:
@@ -152,6 +167,7 @@ def load_config(path: Path) -> dict:
     controls["panGain"] = as_num(controls.get("panGain"), 1.0, 0.0, 4.0)
     for root in cfg["roots"]:
         root["sbs"] = normalise_layout(root.get("sbs")) or "sbs"
+        root["pano_mode"] = normalise_pano_mode(root.get("pano_mode")) or "sphere"
         root["swap"] = as_bool(root.get("swap"), False)
         aspect = root.get("eye_aspect")
         try:
@@ -238,6 +254,48 @@ def image_size(path: Path):
         return None
 
 
+# Только стандартные метаданные Google Photo Sphere (XMP GPano). Узлы ComfyUI
+# не показатель: один и тот же результат можно получить разными нодами, поэтому
+# их игнорируем — файл определится по контенту. Aspect 2:1 сам по себе тоже не
+# годится: full-SBS часто имеет те же размеры.
+PANO_MARKERS = re.compile(
+    r"ns\.google\.com/photos/1\.0/panorama|GPano|UsePanoramaViewer|"
+    r"PhotoSphere|ProjectionType.{0,40}equirectangular|Equirectangular",
+    re.IGNORECASE,
+)
+PANO_NAME = re.compile(
+    r"(?:^|[^a-z0-9])(pano|panorama|equirect|equirectangular|360)(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
+PANO_CACHE: dict[str, bool] = {}
+
+
+def is_panorama(path: Path) -> bool:
+    """Подсказка клиенту: файл похож на 360-панораму. Кэш по mtime + размеру."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = f"{path}|{stat.st_mtime_ns}|{stat.st_size}"
+    if key in PANO_CACHE:
+        return PANO_CACHE[key]
+    result = bool(PANO_NAME.search(path.stem))
+    if not result:
+        try:
+            with path.open("rb") as fh:
+                head = fh.read(262144)
+                result = bool(PANO_MARKERS.search(head.decode("latin-1", "ignore")))
+                # XMP в PNG может лежать после IDAT — проверяем и хвост файла.
+                if not result and stat.st_size > 262144:
+                    fh.seek(-262144, 2)
+                    tail = fh.read(262144)
+                    result = bool(PANO_MARKERS.search(tail.decode("latin-1", "ignore")))
+        except OSError:
+            pass
+    PANO_CACHE[key] = result
+    return result
+
+
 def list_dir(root: dict, rel: str) -> dict:
     target = resolve(root, rel)
     if not target.is_dir():
@@ -260,6 +318,8 @@ def list_dir(root: dict, rel: str) -> dict:
             dims = image_size(p)
             if dims:
                 item["width"], item["height"] = dims
+            if is_panorama(p):
+                item["pano"] = True
             entries.append(item)
     entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
     return {"root": root["id"], "path": rel, "entries": entries}
@@ -472,12 +532,24 @@ def load_state() -> None:
                                 result[root_id] = layout_type
                     return result
 
+                def clean_pano_modes(raw):
+                    result = {}
+                    if isinstance(raw, dict):
+                        for root_id, value in raw.items():
+                            if root_id not in root_ids:
+                                continue
+                            mode = normalise_pano_mode(value)
+                            if mode:
+                                result[root_id] = mode
+                    return result
+
                 STATE = {
                     "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
                     "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
                     "view": clean_views(data.get("view")),
                     "layout": clean_layouts(data.get("layout")),
                     "layoutDefault": clean_layout_defaults(data.get("layoutDefault")),
+                    "panoMode": clean_pano_modes(data.get("panoMode")),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
@@ -486,7 +558,7 @@ def load_state() -> None:
             pass
     STATE = {
         "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
-        "lang": None, "root": None,
+        "panoMode": {}, "lang": None, "root": None,
     }
 
 
@@ -637,6 +709,21 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("Неизвестный тип стереоформата")
                         if defaults.get(root_id) != layout_type:
                             defaults[root_id] = layout_type
+                            changed = True
+                if "panoMode" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешен
+                    raw_mode = payload["panoMode"]
+                    modes = STATE.setdefault("panoMode", {})
+                    if raw_mode is None or raw_mode == "auto":
+                        if modes.pop(root_id, None) is not None:
+                            changed = True
+                    else:
+                        mode = normalise_pano_mode(raw_mode)
+                        if not mode:
+                            raise ValueError("Неизвестный тип 360-проекции")
+                        if modes.get(root_id) != mode:
+                            modes[root_id] = mode
                             changed = True
                 if "layout" in payload:
                     root_id = str(payload.get("root", ""))
