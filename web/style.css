@@ -193,6 +193,10 @@ main {
 }
 .view-settings legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
 .view-settings .setting { margin-top: 8px; }
+.setting select { width: 100%; }
+.setting.check { grid-template-columns: auto 1fr; }
+.setting.check input { width: auto; }
+.layout-info { margin-top: 8px; min-height: 14px; color: var(--accent); font-size: 11px; }
 #resetViewBtn { width: 100%; margin-top: 10px; }
 
 .hint { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }

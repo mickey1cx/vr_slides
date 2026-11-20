@@ -25,7 +25,8 @@
       "id": "demo",
       "name": "Тестовый пример",
       "path": "example",
-      "sbs": "full",
+      "sbs": "auto",
+      "swap": false,
       "eye_aspect": null,
       "distance": 2.0,
       "height": 1.2
@@ -34,7 +35,8 @@
       "id": "sbs",
       "name": "Мои SBS-фото",
       "path": "S:/HSMB_Pics",
-      "sbs": "full",
+      "sbs": "auto",
+      "swap": false,
       "eye_aspect": null,
       "distance": 2.0,
       "height": 1.2

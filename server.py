@@ -59,10 +59,22 @@ if sys.platform == "win32":
         ]
 
 CONFIG: dict = {}
-STATE: dict = {"zoom": {}, "curve": {}, "view": {}, "lang": None, "root": None}
+STATE: dict = {"zoom": {}, "curve": {}, "view": {}, "layout": {}, "lang": None, "root": None}
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
 QR_PNG: bytes | None = None
+
+LAYOUT_TYPES = {"mono", "sbs", "half", "ou", "hou", "auto"}
+LAYOUT_ALIASES = {
+    "2d": "mono", "flat": "mono",
+    "full": "sbs", "lr": "sbs", "rl": "sbs", "stereo": "sbs", "3d": "sbs",
+    "side-by-side": "sbs", "sidebyside": "sbs", "full-sbs": "sbs", "fullsbs": "sbs",
+    "hsbs": "half", "half-sbs": "half", "sbs-half": "half", "halfsbs": "half", "sbshalf": "half", "half-side": "half",
+    "tab": "ou", "tb": "ou", "bt": "ou", "ou": "ou",
+    "top-bottom": "ou", "topbottom": "ou", "over-under": "ou", "overunder": "ou",
+    "full-ou": "ou", "fullou": "ou", "fou": "ou", "full-tab": "ou", "fulltab": "ou",
+    "hou": "hou", "half-ou": "hou", "halfou": "hou", "half-tab": "hou", "halftab": "hou",
+}
 
 # Предпочтительный способ удаления в корзину в текущем окружении.
 TRASH_MODE = "send2trash" if _send2trash else ("windows" if sys.platform == "win32" else "none")
@@ -88,6 +100,24 @@ def as_num(value, default: float, low: float, high: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(low, min(high, number))
+
+
+def normalise_layout(value) -> str | None:
+    """Приводит имя формата к каноническому виду. Возвращает None для мусора."""
+    key = str(value or "").strip().lower()
+    key = re.sub(r"[\s_]+", "-", key)
+    if key in LAYOUT_TYPES:
+        return key
+    return LAYOUT_ALIASES.get(key)
+
+
+def valid_rel(value) -> bool:
+    """Проверка относительного пути картинки для карты ручных переопределений."""
+    if not isinstance(value, str) or not value or len(value) > 512:
+        return False
+    if value.startswith("/") or "\\" in value or "\x00" in value:
+        return False
+    return all(part not in ("", ".", "..") for part in value.split("/"))
 
 
 def load_config(path: Path) -> dict:
@@ -117,6 +147,14 @@ def load_config(path: Path) -> dict:
     controls["shiftStep"] = as_num(controls.get("shiftStep"), 0.005, 0.0005, 0.05)
     controls["panBase"] = as_num(controls.get("panBase"), 0.35, 0.0, 2.0)
     controls["panGain"] = as_num(controls.get("panGain"), 1.0, 0.0, 4.0)
+    for root in cfg["roots"]:
+        root["sbs"] = normalise_layout(root.get("sbs")) or "sbs"
+        root["swap"] = as_bool(root.get("swap"), False)
+        aspect = root.get("eye_aspect")
+        try:
+            root["eye_aspect"] = round(max(0.1, min(10.0, float(aspect))), 4) if aspect else None
+        except (TypeError, ValueError):
+            root["eye_aspect"] = None
     return cfg
 
 
@@ -330,7 +368,8 @@ def config_payload() -> dict:
             {
                 "id": r["id"],
                 "name": r["name"],
-                "sbs": r.get("sbs", "full"),   # full | half
+                "sbs": r["sbs"],   # mono | sbs | half | ou | hou | auto
+                "swap": r["swap"],
                 "eyeAspect": r.get("eye_aspect"),
                 "distance": r.get("distance", 2.0),
                 "height": r.get("height", 1.2),
@@ -393,17 +432,44 @@ def load_state() -> None:
                             result[root_id] = clean
                     return result
 
+                def clean_layouts(raw):
+                    result = {}
+                    if not isinstance(raw, dict):
+                        return result
+                    for root_id, items in raw.items():
+                        if root_id not in root_ids or not isinstance(items, dict):
+                            continue
+                        clean = {}
+                        for rel, value in items.items():
+                            if not valid_rel(rel):
+                                continue
+                            if isinstance(value, str):
+                                value = {"type": value}
+                            if not isinstance(value, dict):
+                                continue
+                            layout_type = normalise_layout(value.get("type"))
+                            if not layout_type:
+                                continue
+                            item = {"type": layout_type}
+                            if "swap" in value:
+                                item["swap"] = as_bool(value["swap"], False)
+                            clean[rel] = item
+                        if clean:
+                            result[root_id] = clean
+                    return result
+
                 STATE = {
                     "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
                     "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
                     "view": clean_views(data.get("view")),
+                    "layout": clean_layouts(data.get("layout")),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
                 }
             return
         except (OSError, ValueError):
             pass
-    STATE = {"zoom": {}, "curve": {}, "view": {}, "lang": None, "root": None}
+    STATE = {"zoom": {}, "curve": {}, "view": {}, "layout": {}, "lang": None, "root": None}
 
 
 def save_state() -> None:
@@ -492,11 +558,18 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError("Ожидается JSON-объект")
             if parsed.path == "/api/delete":
+                root_id = str(payload.get("root", ""))
                 result = delete_files(
-                    str(payload.get("root", "")),
+                    root_id,
                     str(payload.get("rel", "")),
                     payload.get("paths", []),
                 )
+                with STATE_LOCK:
+                    layouts = STATE.get("layout", {}).get(root_id, {})
+                    for rel in payload.get("paths", []):
+                        if isinstance(rel, str):
+                            layouts.pop(rel, None)
+                    save_state()
                 return self._json(result)
             with STATE_LOCK:
                 changed = False
@@ -531,6 +604,31 @@ class Handler(BaseHTTPRequestHandler):
                         number = round(min(high, max(low, float(raw_view[key]))), digits)
                         if view.get(key) != number:
                             view[key] = number
+                            changed = True
+                if "layout" in payload:
+                    root_id = str(payload.get("root", ""))
+                    get_root(root_id)  # проверяем, что каталог разрешен
+                    rel = str(payload.get("path", ""))
+                    if not valid_rel(rel):
+                        raise ValueError("Некорректный путь картинки")
+                    raw_layout = payload["layout"]
+                    layouts = STATE.setdefault("layout", {}).setdefault(root_id, {})
+                    if raw_layout is None:
+                        if layouts.pop(rel, None) is not None:
+                            changed = True
+                        if not layouts:
+                            STATE["layout"].pop(root_id, None)
+                    else:
+                        if not isinstance(raw_layout, dict):
+                            raise ValueError("Ожидается объект настроек формата")
+                        layout_type = normalise_layout(raw_layout.get("type"))
+                        if not layout_type:
+                            raise ValueError("Неизвестный тип стереоформата")
+                        item = {"type": layout_type}
+                        if "swap" in raw_layout:
+                            item["swap"] = as_bool(raw_layout["swap"], False)
+                        if layouts.get(rel) != item:
+                            layouts[rel] = item
                             changed = True
                 if "lang" in payload:
                     lang = str(payload["lang"])
