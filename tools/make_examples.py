@@ -101,6 +101,29 @@ def main() -> None:
     paste(img, left, (0, 540, 960, 1080))
     save(img, "07_ou_bt.jpg")
 
+    # Half-SBS с большой диспаратностью и без подсказки в имени: чистая проверка
+    # детектора по сходству половин (сдвиг ~24 пикселя на уменьшенном изображении).
+    near = eye_image("L", "large disparity", 120, (236, 124, 72))
+    far = eye_image("R", "large disparity", -120, (236, 124, 72))
+    img = Image.new("RGB", (960, 540))
+    paste(img, near, (0, 0, 480, 540))
+    paste(img, far, (480, 0, 960, 540))
+    save(img, "08_big_disparity.jpg")
+
+    # Вертикальная стереопара 1536x1280: два портретных кадра по 768x1280.
+    # Aspect 1.2 раньше ошибочно давал признак OU; теперь это Half-SBS.
+    near = eye_image("L", "portrait pair", 30, (236, 124, 72))
+    far = eye_image("R", "portrait pair", -30, (236, 124, 72))
+    img = Image.new("RGB", (1536, 1280))
+    paste(img, near, (0, 0, 768, 1280))
+    paste(img, far, (768, 0, 1536, 1280))
+    save(img, "09_pair_1536.jpg")
+
+    # Контроль: обычное фото тех же размеров не должно становиться стереопарой.
+    save(eye_image("2D", "single photo", 0, (236, 124, 72)).resize(
+        (1536, 1280), Image.Resampling.LANCZOS
+    ), "10_plain_1536.jpg")
+
 
 if __name__ == "__main__":
     main()

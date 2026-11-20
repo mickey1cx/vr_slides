@@ -307,6 +307,9 @@ function pearson(a, b) {
 }
 
 // Сходство половин картинки: по ширине (SBS) или по высоте (OU).
+// Сравниваем не яркость, а горизонтальные границы: у обычного фото с
+// повторяющейся текстурой яркость совпадает случайно, а у стереопары совпадают
+// именно контуры. Диспаратность компенсируется перебором небольшого сдвига.
 function halfCorrelation(img, vertical) {
   const w = 96;
   const h = 64;
@@ -322,28 +325,38 @@ function halfCorrelation(img, vertical) {
   } catch {
     return 0;
   }
-  const a = [];
-  const b = [];
-  if (vertical) {
-    for (let y = 0; y < h / 2; y += 2) {
-      for (let x = 0; x < w; x += 2) {
-        a.push(luminance(data, x, y, w));
-        b.push(luminance(data, x, y + h / 2, w));
-      }
-    }
-  } else {
-    for (let y = 0; y < h; y += 2) {
-      for (let x = 0; x < w / 2; x += 2) {
-        a.push(luminance(data, x, y, w));
-        b.push(luminance(data, x + w / 2, y, w));
-      }
-    }
+  const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) lum[y * w + x] = luminance(data, x, y, w);
   }
-  return pearson(a, b);
+  const edge = (x, y) => Math.abs(
+    lum[y * w + Math.min(x + 1, w - 1)] - lum[y * w + Math.max(x - 1, 0)]
+  );
+  const halfW = vertical ? w : w / 2;
+  const halfH = vertical ? h / 2 : h;
+  let best = 0;
+  for (let dx = -20; dx <= 20; dx++) {
+    const a = [];
+    const b = [];
+    const x0 = Math.max(0, -dx);
+    const x1 = Math.min(halfW, halfW - dx);
+    for (let y = 0; y < halfH; y += 2) {
+      const y2 = vertical ? y + halfH : y;
+      for (let x = x0; x < x1; x += 2) {
+        const x2 = vertical ? x + dx : halfW + x + dx;
+        a.push(edge(x, y));
+        b.push(edge(x2, y2));
+      }
+    }
+    // Штраф за сдвиг: настоящая диспаратность обычно невелика, а случайное
+    // совпадение текстур на большом сдвиге не должно давать ложный SBS.
+    best = Math.max(best, pearson(a, b) - Math.abs(dx) * 0.01);
+  }
+  return best;
 }
 
 function corrScore(value) {
-  return Math.max(0, Math.min(1, (value - 0.35) / 0.5));
+  return Math.max(0, Math.min(1, (value - 0.25) / 0.35));
 }
 
 function detectLayout(img, name) {
@@ -353,19 +366,20 @@ function detectLayout(img, name) {
   const sbsCorr = halfCorrelation(img, false);
   const ouCorr = halfCorrelation(img, true);
   const wide = aspect >= 2.4;
-  const tall = aspect <= 1.15;
+  const tall = aspect <= 1.05; // Full-OU обычно ~8:9; 1.2 — уже не OU-признак
   const normal = !wide && !tall;
   const cs = corrScore(sbsCorr);
   const co = corrScore(ouCorr);
-  // Широкий файл — почти всегда sbs, высокий — ou; умеренный признак слабее.
+  // Широкий файл — почти всегда sbs, высокий — ou. Промежуточные значения
+  // (например 1536×1280) не должны давать ложный признак OU.
   const sbsAspect = wide ? 0.35 : (aspect > 1.4 ? 0.2 : 0);
-  const ouAspect = tall ? 0.35 : (aspect < 1.5 ? 0.2 : 0);
+  const ouAspect = tall ? 0.35 : 0;
   const candidates = [
-    { type: 'sbs', score: (hint === 'sbs' ? 0.45 : 0) + sbsAspect + cs * 0.45 },
-    { type: 'half', score: (hint === 'half' ? 0.45 : 0) + (normal ? 0.35 : 0) + cs * 0.45 },
-    { type: 'ou', score: (hint === 'ou' ? 0.45 : 0) + ouAspect + co * 0.45 },
-    { type: 'hou', score: (hint === 'hou' ? 0.45 : 0) + (normal ? 0.35 : 0) + co * 0.45 },
-    { type: 'mono', score: (hint === 'mono' ? 0.45 : 0) + (normal ? 0.35 : 0) + (1 - Math.max(cs, co)) * 0.45 },
+    { type: 'sbs', score: (hint === 'sbs' ? 0.45 : 0) + sbsAspect + cs * 0.5 },
+    { type: 'half', score: (hint === 'half' ? 0.45 : 0) + (normal ? 0.35 : 0) + cs * 0.5 },
+    { type: 'ou', score: (hint === 'ou' ? 0.45 : 0) + ouAspect + co * 0.5 },
+    { type: 'hou', score: (hint === 'hou' ? 0.45 : 0) + (normal ? 0.35 : 0) + co * 0.5 },
+    { type: 'mono', score: (hint === 'mono' ? 0.45 : 0) + (normal ? 0.35 : 0) + (1 - Math.max(cs, co)) * 0.5 },
   ].sort((a, b) => b.score - a.score);
   let best = candidates[0];
   if (hint && hint !== best.type) {
