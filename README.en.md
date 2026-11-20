@@ -61,7 +61,7 @@ Open `config.json`:
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
 - You can add as many `roots` as you need, each with its own path and mode.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
-- `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, chosen language and last selected source).
+- `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, stereo layouts for directories and individual images, chosen language and last selected source).
 - `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
 - `controls` — thumbstick pan and stereo shift settings (see below).
 - `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
@@ -84,7 +84,12 @@ With `sbs: "auto"` each image is classified using three signals:
 2. **aspect ratio** — very wide files (`≥ 2.4`) are almost always full-SBS, very tall ones (`≤ 1.05`) are Full-OU. The remaining range is split as follows: `1.05–1.35` — half-SBS with portrait eyes (1536×1280), `1.35–1.6` — portrait full-SBS (1920×1280), `1.6–2.4` — regular 16:9 half-SBS;
 3. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared. Horizontal edges are compared instead of raw brightness, with a small horizontal shift search: this handles real disparity between the eyes and avoids false matches on repeating textures.
 
-The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block solves this: a dropdown (including auto-detect) and a **Swap eyes** checkbox. The choice is saved **per file** in `state.json` and overrides the directory setting; **From directory** removes the override.
+The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block has two dropdowns:
+
+- **For directory** — auto-detect by default. Choosing a concrete layout applies it to **every image of the source** and saves it in `state.json` as `layoutDefault[rootId]`. Switching back to auto-detect removes the setting.
+- **For image** — a per-file override, plus a **Swap eyes** checkbox. **From directory** removes the override.
+
+Priority: **image override → directory layout → `config.json` → auto-detection**. The directory setting is a safety net for folders where every photo uses the same format but the detector gets it wrong.
 
 ### 2. Generate a certificate
 
@@ -143,7 +148,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
 2. At the certificate warning choose **Advanced → Proceed** (required: without accepting the certificate WebXR will not start).
 3. Pick a photo and press **Enter VR**.
 
-   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory. The **Stereo layout** block shows how the current file was recognized; the dropdown and **Swap eyes** checkbox let you pin the layout or eye order for this particular image.
+   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory. The **Stereo layout** block shows how the current file was recognized; **For directory** pins the layout for the whole folder, while **For image** and **Swap eyes** pin the layout or eye order for this particular image.
 
    **Marks and deletion.** Press **A** (in VR), the **A/M** key, the **"Toggle mark"** button in the panel, or the badge in the top-right corner of a thumbnail (in 2D; `+` to mark, `✓` to unmark) to toggle a mark. In VR photo mode a marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint under the photo. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
 
@@ -210,7 +215,7 @@ Just translate the keys from `web/i18n/en.json` — the new language appears in 
 
 **Russian convention.** In all Russian texts in this project — docs, `web/i18n/ru.json`, UI strings and comments — write `е` instead of `ё`: `все`, `желтый`, `раздает`, `сохраненное`.
 
-Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, per-image layout overrides, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
+Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, the directory layout, per-image layout overrides, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
 ## Roadmap
 
@@ -253,7 +258,7 @@ web/index.html     — 2D file browser and Enter VR button
 web/app.js         — layout loading and detection, WebGL rendering, WebXR session, input
 web/style.css
 web/i18n/*.json    — translation files (one file per language)
-state.json         — saved zoom/curve/view per directory, per-image layout overrides, language and source (do not commit)
+state.json         — saved zoom/curve/view per directory, directory and per-image layouts, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
 thumbs/            — thumbnail cache (do not commit)
 LICENSE            — MIT license
@@ -266,7 +271,7 @@ docs/              — screenshots for the documentation
 - **No files shown** — check `path` in `config.json` (on Windows use forward slashes, e.g. `D:/Stereo`) and the extensions: `.jpg .jpeg .png .webp` are supported.
 - **The image looks stretched** — the layout was detected incorrectly. Pick the right one in the **Stereo layout** block of the selected-image panel (`sbs` ↔ `half` ↔ `ou` ↔ `hou`), or set `sbs`/`eye_aspect` for the directory.
 - **The eyes are swapped or the image looks "inside out"** — enable **Swap eyes** for this file or set `swap: true` for the whole directory.
-- **Auto-detection is wrong** — expected for symmetric scenes and ordinary 16:9 photos: pin the layout manually in **Stereo layout**, it will be saved in `state.json`.
+- **Auto-detection is wrong** — expected for symmetric scenes and ordinary 16:9 photos: pin the layout via **For image**, or via **For directory** if the whole folder uses the same format. Either choice is saved in `state.json`.
 - **The texture does not load on Quest 3** — reduce `max_texture_size` to 2048.
 - **Network is slow** — connect the PC with a cable, use 5 GHz for the headset, and enable Pillow for thumbnails.
 
