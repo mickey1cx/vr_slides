@@ -240,6 +240,7 @@ Not implemented yet.
   - marks and deletion stay **local** to each headset by default so one person cannot delete photos for everyone; shared marks are an option.
 - [ ] **Phone remote.** A companion page on the same LAN: photo list, selection, browsing, pan and slideshow control from a phone. Connect via a QR link to the headset session and share one command channel with the VR client.
 - [ ] **Slideshow.** Auto-advance with a configurable interval, cross-fade between photos, play/pause and shuffle. Controlled from VR and from the phone remote; interval and order are saved with the other per-directory settings.
+- [ ] **Executable build.** Minimal path: PyInstaller `--onedir` freezes only `server.py`, while `web/`, `config.json`, locales, certificates and examples stay outside next to the exe and can be edited without rebuilding. Path handling needs to look up external files relative to `sys.executable` instead of `__file__`, plus a build script and README instructions. A full `--onefile` with bundled assets, or Nuitka, can come later if needed.
 
 ## Dependencies
 
