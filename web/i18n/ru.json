@@ -42,7 +42,7 @@
   "layoutPano": "360° панорама (Equirectangular)",
   "panoProjection": "Проекция 360°",
   "panoSphere": "Сфера",
-  "panoCylinder": "Цилиндр",
+  "panoCylinder": "Цилиндр (стена)",
   "layoutSwap": "Поменять глаза (RL / BT)",
   "layoutDetected": "{source}, {confidence}%",
   "layoutPinned": "задано для фото",

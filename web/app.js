@@ -71,9 +71,6 @@ const PHOTO_SEGMENTS = 64; // сегменты по горизонтали дл�
 const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
 const PANO_LON = 48; // сегменты по долготе
 const PANO_LAT = 24; // сегменты по широте
-// Цилиндрическая проекция уходит в бесконечность на полюсах: tan(90°).
-// Обрезаем по 2° сверху и снизу — это почти весь кадр без искажений.
-const PANO_CYL_MAX_LAT = (88 * Math.PI) / 180;
 const CURVE_STEP = 0.08; // шаг изменения изгиба за один повтор стика
 // Значения по умолчанию; сервер может переопределить их блоком "controls" в config.json.
 const DEFAULT_CONTROLS = {
@@ -231,6 +228,7 @@ const state = {
   panAxis: { x: 0, y: 0, last: 0 },
   shiftAxis: { x: 0, last: 0 },
   buttons: { stick: false, b: false, a: false, grip: false, trigger: false },
+  viewport: [0, 0, 1, 1], // текущий глаз: x, y, w, h для «плоской» вертикали цилиндра
   hudVisible: true,      // панель подсказок в VR; переключается коротким grip
   gripModified: false,   // grip + стик менял вид: короткий grip не должен прятать панель
   gripConsumed: false,   // grip использован для выхода из галереи: не считаем его коротким
@@ -1108,33 +1106,6 @@ function buildPanoMeshes(gl) {
   state.sphereVbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, state.sphereVbo);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sphere), gl.STATIC_DRAW);
-
-  // Цилиндр — плоская картинка, замкнутая вокруг зрителя. Вершины идут по
-  // y = R*tan(lat), а v берется из lat эквайреугольного источника: горизонтальные
-  // и вертикальные линии остаются прямыми, без «шара» и сжатия у полюсов.
-  // Масштаб по высоте для aspect != 2 применяет модель в drawPano().
-  const cylinderPoint = (j, i) => {
-    const lat = -PANO_CYL_MAX_LAT + (j / PANO_LAT) * 2 * PANO_CYL_MAX_LAT;
-    const u = i / PANO_LON;
-    const lon = (u - 0.5) * Math.PI * 2;
-    return [
-      PANO_RADIUS * Math.sin(lon),
-      PANO_RADIUS * Math.tan(lat),
-      -PANO_RADIUS * Math.cos(lon),
-      u, lat / Math.PI + 0.5,
-    ];
-  };
-  const cylinder = [];
-  for (let j = 0; j < PANO_LAT; j++) {
-    for (let k = 0; k <= PANO_LON; k++) {
-      const i = (j % 2 === 0) ? k : (PANO_LON - k);
-      cylinder.push(...cylinderPoint(j, i), ...cylinderPoint(j + 1, i));
-    }
-  }
-  state.cylinderVertexCount = cylinder.length / 5;
-  state.cylinderVbo = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, state.cylinderVbo);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(cylinder), gl.STATIC_DRAW);
 }
 
 function initGL(gl) {
@@ -1142,8 +1113,8 @@ function initGL(gl) {
     attribute vec3 aPos;
     attribute vec2 aUv;
     uniform mat4 uMVP;
-    uniform vec2 uUvOffset;
-    uniform vec2 uUvScale;
+    uniform mediump vec2 uUvOffset;
+    uniform mediump vec2 uUvScale;
     varying vec2 vUv;
     void main() {
       vUv = uUvOffset + aUv * uUvScale;
@@ -1153,13 +1124,23 @@ function initGL(gl) {
     precision mediump float;
     uniform sampler2D uTex;
     uniform vec3 uTint;
+    uniform mediump vec2 uUvOffset;
+    uniform mediump vec2 uUvScale;
     uniform float uWrap;
+    uniform float uFlatV;
+    uniform vec4 uViewport;
     varying vec2 vUv;
     void main() {
       // Долгота замыкается во фрагментном шейдере: если брать fract в вершинах,
       // на шве интерполяция проходит через всю текстуру и дает разрыв.
       vec2 uv = vUv;
       if (uWrap > 0.5) uv.x = fract(uv.x);
+      // Цилиндр: вертикаль идет прямо по экрану, а не по геометрии сферы.
+      // Так картинка остается плоской стеной без полюсов и черных кругов.
+      if (uFlatV > 0.5) {
+        float sy = clamp((gl_FragCoord.y - uViewport.y) / uViewport.w, 0.0, 1.0);
+        uv.y = clamp(uUvOffset.y + sy * uUvScale.y, 0.0, 1.0);
+      }
       gl_FragColor = vec4(texture2D(uTex, uv).rgb * uTint, 1.0);
     }`;
 
@@ -1178,6 +1159,8 @@ function initGL(gl) {
     uUvOffset: gl.getUniformLocation(program, 'uUvOffset'),
     uUvScale: gl.getUniformLocation(program, 'uUvScale'),
     uWrap: gl.getUniformLocation(program, 'uWrap'),
+    uFlatV: gl.getUniformLocation(program, 'uFlatV'),
+    uViewport: gl.getUniformLocation(program, 'uViewport'),
     uTint: gl.getUniformLocation(program, 'uTint'),
     uTex: gl.getUniformLocation(program, 'uTex'),
   };
@@ -1319,7 +1302,7 @@ function uploadMarkTexture(gl) {
   uploadImage(gl, tex, canvas);
 }
 
-function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4, wrap = 0) {
+function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, count = 4, wrap = 0, flatV = 0) {
   gl.useProgram(state.program);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -1334,6 +1317,8 @@ function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, 
   gl.uniform3fv(state.loc.uTint, tint);
   gl.uniform1i(state.loc.uTex, 0);
   gl.uniform1f(state.loc.uWrap, wrap);
+  gl.uniform1f(state.loc.uFlatV, flatV);
+  gl.uniform4fv(state.loc.uViewport, state.viewport);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, count);
 }
 
@@ -1396,21 +1381,19 @@ function panoMode() {
   return normalisePanoMode(rootCfg().pano_mode) || 'sphere';
 }
 
-// Панораму смотрим изнутри: сфера для equirectangular, цилиндр для «замкнутой
-// плоской картинки». Зум приближает центр текстуры, панорама сдвигает долготу.
+// Панораму смотрим изнутри. Оба режима используют сферу как «экран», но в
+// режиме цилиндра вертикаль берется из экранной координаты: картинка стоит
+// плоской стеной, а не сферическим куполом. Полюса при этом просто отсутствуют.
 function drawPano(gl, proj, viewM) {
   const s = clamp(1 / state.zoom, 0.1, 1);
-  const base = (1 - s) / 2;
-  const uOffset = base + state.view.panX * 0.5 * s;
-  const vOffset = clamp(base + state.view.panY * 0.5 * s, 0, 1 - s);
-  const cylinder = panoMode() === 'cylinder';
-  const model = cylinder ? scale(1, 2 / (state.aspect || 2), 1) : null;
-  const mvp = model ? multiply(proj, multiply(viewM, model)) : multiply(proj, viewM);
+  const flatV = panoMode() === 'cylinder';
+  // Для неквадратной панорамы сохраняем соотношение сторон по вертикали.
+  const vs = flatV ? Math.min(1, s * 2 / (state.aspect || 2)) : s;
+  const uOffset = (1 - s) / 2 + state.view.panX * 0.5 * s;
+  const vOffset = clamp((1 - vs) / 2 + state.view.panY * 0.5 * vs, 0, 1 - vs);
   draw(
-    gl, state.texPhoto, mvp, [uOffset, vOffset], [s, s], [1, 1, 1],
-    cylinder ? state.cylinderVbo : state.sphereVbo,
-    cylinder ? state.cylinderVertexCount : state.sphereVertexCount,
-    1,
+    gl, state.texPhoto, multiply(proj, viewM), [uOffset, vOffset], [s, vs], [1, 1, 1],
+    state.sphereVbo, state.sphereVertexCount, 1, flatV ? 1 : 0,
   );
 }
 
@@ -2242,6 +2225,7 @@ function onFrame(time, frame) {
     for (const view of pose.views) {
       const vp = layer.getViewport(view);
       gl.viewport(vp.x, vp.y, vp.width, vp.height);
+      state.viewport = [vp.x, vp.y, vp.width, vp.height];
       const proj = view.projectionMatrix;
       const viewM = view.transform.inverse.matrix;
 
