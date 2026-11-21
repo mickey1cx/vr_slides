@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. In "cylinder" mode a fullscreen quad is drawn instead: each fragment reconstructs a ray from the projection matrix and camera rotation. Longitude comes from the ray direction, vertical coordinate from the tangent of elevation. The wall is stretched over ±75°, so the polar top and bottom rows of an equirectangular source stay outside the normal field of view. The result is a closed flat wall fixed in world space: head rotation and translation do not make the picture swim, and there are no black circles overhead.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. "Cylinder" mode uses a different principle instead of the same sphere: a fullscreen quad is drawn, each fragment reconstructs a ray from the projection matrix and camera rotation, longitude comes from the ray direction, and the whole image height is spread over the eye's vertical field of view. This is not an equirectangular cap above your head but a flat wall filling the view. Head rotation and translation do not make the picture swim.
 
 ## Quick start
 
@@ -47,7 +47,7 @@ Open `config.json`:
       "path": "D:/Stereo",
       "sbs": "auto",
       "pano_mode": "sphere",
-      "pano_cyl_half_fov": 75,
+      "pano_cyl_vfill": 0.9,
       "swap": false,
       "eye_aspect": null,
       "distance": 2.0,
@@ -59,7 +59,7 @@ Open `config.json`:
 
 - `sbs`: default layout for the directory. `auto` — detect the layout of every file (recommended); `mono` — an ordinary 2D image; `sbs` / `full` — two side-by-side halves at full resolution; `half` — half-SBS, each eye compressed horizontally; `ou` — Full-OU / TAB / Top-and-Bottom, two vertical halves at full resolution; `hou` — Half-OU / HOU, each eye compressed vertically by 2; `pano` — a 360° equirectangular panorama viewed from inside a sphere. Aliases such as `2d`, `full-ou`, `half-ou`, `hsbs`, `360`, `equirect` are accepted too.
 - `pano_mode`: projection for 360 panoramas — `sphere` (default) or `cylinder` (a flat image wrapped around the viewer, assumed seamless). Can also be switched in the UI; the choice is saved in `state.json` as `panoMode[rootId]`.
-- `pano_cyl_half_fov`: half of the cylinder's vertical angle in degrees, 50–85 (default 75). Smaller values keep the poles farther outside the view; larger values stretch the picture vertically more.
+- `pano_cyl_vfill`: share of the eye's vertical FOV occupied by the picture in "cylinder" mode, 0.5–1.0 (default 0.9). 1.0 fills the view to the edges; smaller values leave margins.
 - `swap`: `true` when the eyes or halves are stored in reverse order (`RL` instead of `LR`, `BT` instead of `TB`). It can be overridden per image in the UI.
 - `eye_aspect`: explicit aspect ratio of one eye; when `null`, it is derived from the image size.
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
@@ -133,7 +133,7 @@ python server.py
 
 Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context), `--no-qr` (skip QR generation at startup), `--log` (write a journal to `logs/server_<start time>.log`).
 
-**Debugging.** Run `debug.bat` — it enables `--log`. All server requests, errors and browser messages go into a file named after the server start time. No console needed: press the **Logs** button in the page header to see the latest entries (Refresh / Clear / Close). If the server runs without `--log`, the panel only shows the browser-side buffer and reminds you about `debug.bat`. In "Cylinder (wall)" mode the client writes the gaze direction, projection parameters, sampled vertical coordinate `vRaw/v` and the vertical span `halfFov` once every 2 seconds, so you can verify the picture depends only on head rotation and that the poles stay out of view. The `logs/` folder is gitignored.
+**Debugging.** Run `debug.bat` — it enables `--log`. All server requests, errors and browser messages go into a file named after the server start time. No console needed: press the **Logs** button in the page header to see the latest entries (Refresh / Clear / Close). If the server runs without `--log`, the panel only shows the browser-side buffer and reminds you about `debug.bat`. In "Cylinder (wall)" mode the client writes the gaze direction, projection parameters, sampled vertical coordinate `vRaw/v` and the vertical span `halfFov` once every 2 seconds, so you can verify the picture depends only on head rotation. The `logs/` folder is gitignored.
 
 At startup the server prints the URL and the QR file path:
 
