@@ -71,10 +71,10 @@ const PHOTO_SEGMENTS = 64; // сегменты по горизонтали дл�
 const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
 const PANO_LON = 48; // сегменты по долготе
 const PANO_LAT = 24; // сегменты по широте
-// Полюса эквайреугольного кадра лежат на v=0 и v=1. Если развернуть всю
-// текстуру только на ±57°, они попадают в поле зрения и выглядят как сфера.
-// Разворачиваем вертикаль на ±75°, чтобы верхняя/нижняя строки были вне вида.
-const PANO_CYL_HALF_FOV_DEG = 75;
+// В режиме «плоская стена» вся высота картинки занимает почти весь вертикальный
+// угол обзора глаза. Это отдельный принцип от эквайреугольной сферы: полюса не
+// разворачиваются в маленькие шапки, кадр стоит стеной перед пользователем.
+const PANO_CYL_VFILL = 0.9;
 const IDENTITY_MATRIX = new Float32Array([
   1, 0, 0, 0,
   0, 1, 0, 0,
@@ -1482,12 +1482,11 @@ function drawPano(gl, proj, viewM, camM, eye) {
       camM[4], camM[5], camM[6],
       camM[8], camM[9], camM[10],
     ]);
-    // Ограничиваем высоту сверху: H = R/scale. Без ограничения текстура 2:1
-    // заканчивается на ±57°, и полюса снова видны — это выглядит как сфера.
-    const naturalScale = aspect / (2 * Math.PI);
-    const halfFovDeg = clamp(Number(rootCfg().panoCylHalfFov) || PANO_CYL_HALF_FOV_DEG, 50, 85);
-    const poleScale = 0.5 / Math.tan((halfFovDeg * Math.PI) / 180);
-    state.cylScale = Math.min(naturalScale, poleScale);
+    // Отдельный принцип для «стены»: P[5] = 1/tan(половины вертикального FOV),
+    // поэтому 0.5*P[5] разворачивает всю высоту текстуры ровно на угол глаза.
+    // vfill оставляет небольшие поля, чтобы верхняя/нижняя строки не срезались.
+    const vfill = clamp(Number(rootCfg().panoCylVfill) || PANO_CYL_VFILL, 0.5, 1);
+    state.cylScale = 0.5 * vfill * proj[5];
     logPanoDebug(eye, proj, camM, { s, uOffset, vOffset, aspect });
     draw(
       gl, state.texPhoto, IDENTITY_MATRIX, [uOffset, vOffset], [s, s], [1, 1, 1],
