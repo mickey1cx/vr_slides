@@ -74,7 +74,7 @@ const PANO_LAT = 24; // сегменты по широте
 // В режиме «плоская стена» вся высота стены занимает вертикальный угол глаза.
 // Источник — эквайреугольная 360-панорама: её верх/низ содержат полюса сферы.
 // Для стены берем только центральную полосу кадра, иначе полюса снова дают
-// ощущение сферы. Зеркальный повтор по v убирает черные пятна над/под стеной.
+// ощущение сферы. Над/под стеной остается пустота — это ожидаемо.
 const PANO_CYL_VFILL = 1.0;
 const PANO_CYL_VCROP = 0.5;
 const IDENTITY_MATRIX = new Float32Array([
@@ -1169,12 +1169,14 @@ function initGL(gl) {
         // тангенса возвышения. Картинка привязана к миру, не к экрану.
         float lon = atan(dir.x, -dir.z);
         float vWall = 0.5 + (dir.y / horiz) * uCylScale;
+        // Стена имеет конечную высоту: над/под ней остается пустота (фон).
+        if (vWall < 0.0 || vWall > 1.0) {
+          gl_FragColor = vec4(0.02, 0.02, 0.04, 1.0);
+          return;
+        }
         // Эквайреугольный источник содержит полюса в верхней/нижней строке.
         // Для стены берем центральную полосу: так кадр не выглядит сферой.
         float vSrc = 0.5 + (vWall - 0.5) * uCylVcrop;
-        // Зеркальный повтор вместо clamp: над/под стеной не будет черных пятен.
-        float m = mod(vSrc, 2.0);
-        vSrc = 1.0 - abs(1.0 - m);
         uv = vec2(0.5 + lon / (2.0 * PI), vSrc);
       }
       uv = uUvOffset + uv * uUvScale;
@@ -1466,16 +1468,15 @@ function logPanoDebug(eye, proj, camM, info) {
   const lon = Math.atan2(fx, -fz);
   const lat = Math.atan2(fy, horiz);
   const vWall = 0.5 + Math.tan(lat) * state.cylScale;
-  const vSrcRaw = 0.5 + (vWall - 0.5) * state.cylVcrop;
-  const m = ((vSrcRaw % 2) + 2) % 2;
-  const vSrc = 1 - Math.abs(1 - m);
+  const inside = vWall >= 0 && vWall <= 1;
+  const vSrc = 0.5 + (vWall - 0.5) * state.cylVcrop;
   const halfFov = (Math.atan(0.5 / state.cylScale) * 180) / Math.PI;
   logClient(
     'DEBUG',
     `pano cylinder ${eye}: viewport=[${Array.from(state.viewport).map((n) => n.toFixed(0)).join(',')}] ` +
     `proj=[${f(proj.slice(0, 10))}] forward=[${f([fx, fy, fz])}] ` +
-    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} vWall=${vWall.toFixed(3)} ` +
-    `vSrcRaw=${vSrcRaw.toFixed(3)} vSrc=${vSrc.toFixed(3)} ` +
+    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} vWall=${vWall.toFixed(3)} inside=${inside ? 1 : 0} ` +
+    `vSrc=${vSrc.toFixed(3)} ` +
     `aspect=${info.aspect.toFixed(3)} scale=${state.cylScale.toFixed(3)} vcrop=${state.cylVcrop.toFixed(3)} ` +
     `halfFov=${halfFov.toFixed(1)} ` +
     `zoom=${state.zoom.toFixed(2)} uv=[${info.uOffset.toFixed(3)},${info.vOffset.toFixed(3)}] ` +
