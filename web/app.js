@@ -71,10 +71,12 @@ const PHOTO_SEGMENTS = 64; // сегменты по горизонтали дл�
 const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
 const PANO_LON = 48; // сегменты по долготе
 const PANO_LAT = 24; // сегменты по широте
-// В режиме «плоская стена» вся высота картинки занимает почти весь вертикальный
-// угол обзора глаза. Это отдельный принцип от эквайреугольной сферы: полюса не
-// разворачиваются в маленькие шапки, кадр стоит стеной перед пользователем.
-const PANO_CYL_VFILL = 0.9;
+// В режиме «плоская стена» вся высота стены занимает вертикальный угол глаза.
+// Источник — эквайреугольная 360-панорама: её верх/низ содержат полюса сферы.
+// Для стены берем только центральную полосу кадра, иначе полюса снова дают
+// ощущение сферы. Зеркальный повтор по v убирает черные пятна над/под стеной.
+const PANO_CYL_VFILL = 1.0;
+const PANO_CYL_VCROP = 0.5;
 const IDENTITY_MATRIX = new Float32Array([
   1, 0, 0, 0,
   0, 1, 0, 0,
@@ -211,6 +213,7 @@ const state = {
   projParams: [1, 1, 0, 0], // 1/P[0], 1/P[5], P[8], P[9] текущего глаза
   camRot: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), // поворот камеры без смещения
   cylScale: 1 / (2 * Math.PI), // R/H: сколько текстуры приходится на тангенс высоты
+  cylVcrop: PANO_CYL_VCROP, // доля высоты источника, натянутая на стену
   lastPanoDebug: 0,
   texPhoto: null,
   texLabel: null,
@@ -1147,6 +1150,7 @@ function initGL(gl) {
     uniform vec4 uProjParams; // 1/P[0], 1/P[5], P[8], P[9]
     uniform mat3 uCamRot;     // поворот камеры в мир без смещения
     uniform float uCylScale;  // R/H: тангенс высоты → текстурная v
+    uniform float uCylVcrop;  // доля высоты источника, натянутая на стену
     varying vec2 vUv;
     const float PI = 3.141592653589793;
     void main() {
@@ -1165,7 +1169,13 @@ function initGL(gl) {
         // тангенса возвышения. Картинка привязана к миру, не к экрану.
         float lon = atan(dir.x, -dir.z);
         float vWall = 0.5 + (dir.y / horiz) * uCylScale;
-        uv = vec2(0.5 + lon / (2.0 * PI), clamp(vWall, 0.0, 1.0));
+        // Эквайреугольный источник содержит полюса в верхней/нижней строке.
+        // Для стены берем центральную полосу: так кадр не выглядит сферой.
+        float vSrc = 0.5 + (vWall - 0.5) * uCylVcrop;
+        // Зеркальный повтор вместо clamp: над/под стеной не будет черных пятен.
+        float m = mod(vSrc, 2.0);
+        vSrc = 1.0 - abs(1.0 - m);
+        uv = vec2(0.5 + lon / (2.0 * PI), vSrc);
       }
       uv = uUvOffset + uv * uUvScale;
       if (uWrap > 0.5) uv.x = fract(uv.x);
@@ -1193,6 +1203,7 @@ function initGL(gl) {
     uProjParams: gl.getUniformLocation(program, 'uProjParams'),
     uCamRot: gl.getUniformLocation(program, 'uCamRot'),
     uCylScale: gl.getUniformLocation(program, 'uCylScale'),
+    uCylVcrop: gl.getUniformLocation(program, 'uCylVcrop'),
     uTint: gl.getUniformLocation(program, 'uTint'),
     uTex: gl.getUniformLocation(program, 'uTex'),
   };
@@ -1366,6 +1377,7 @@ function draw(gl, tex, mvp, uvOffset, uvScale, tint = [1, 1, 1], buffer = null, 
   gl.uniform4fv(state.loc.uProjParams, state.projParams);
   gl.uniformMatrix3fv(state.loc.uCamRot, false, state.camRot);
   gl.uniform1f(state.loc.uCylScale, state.cylScale);
+  gl.uniform1f(state.loc.uCylVcrop, state.cylVcrop);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, count);
 }
 
@@ -1453,14 +1465,19 @@ function logPanoDebug(eye, proj, camM, info) {
   const horiz = Math.max(Math.hypot(fx, fz), 0.0001);
   const lon = Math.atan2(fx, -fz);
   const lat = Math.atan2(fy, horiz);
-  const vRaw = 0.5 + Math.tan(lat) * state.cylScale;
+  const vWall = 0.5 + Math.tan(lat) * state.cylScale;
+  const vSrcRaw = 0.5 + (vWall - 0.5) * state.cylVcrop;
+  const m = ((vSrcRaw % 2) + 2) % 2;
+  const vSrc = 1 - Math.abs(1 - m);
   const halfFov = (Math.atan(0.5 / state.cylScale) * 180) / Math.PI;
   logClient(
     'DEBUG',
     `pano cylinder ${eye}: viewport=[${Array.from(state.viewport).map((n) => n.toFixed(0)).join(',')}] ` +
     `proj=[${f(proj.slice(0, 10))}] forward=[${f([fx, fy, fz])}] ` +
-    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} vRaw=${vRaw.toFixed(3)} v=${clamp(vRaw, 0, 1).toFixed(3)} ` +
-    `aspect=${info.aspect.toFixed(3)} scale=${state.cylScale.toFixed(3)} halfFov=${halfFov.toFixed(1)} ` +
+    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} vWall=${vWall.toFixed(3)} ` +
+    `vSrcRaw=${vSrcRaw.toFixed(3)} vSrc=${vSrc.toFixed(3)} ` +
+    `aspect=${info.aspect.toFixed(3)} scale=${state.cylScale.toFixed(3)} vcrop=${state.cylVcrop.toFixed(3)} ` +
+    `halfFov=${halfFov.toFixed(1)} ` +
     `zoom=${state.zoom.toFixed(2)} uv=[${info.uOffset.toFixed(3)},${info.vOffset.toFixed(3)}] ` +
     `uvScale=${info.s.toFixed(3)}`,
   );
@@ -1483,10 +1500,11 @@ function drawPano(gl, proj, viewM, camM, eye) {
       camM[8], camM[9], camM[10],
     ]);
     // Отдельный принцип для «стены»: P[5] = 1/tan(половины вертикального FOV),
-    // поэтому 0.5*P[5] разворачивает всю высоту текстуры ровно на угол глаза.
-    // vfill оставляет небольшие поля, чтобы верхняя/нижняя строки не срезались.
+    // поэтому 0.5*P[5] разворачивает высоту стены ровно на угол глаза.
     const vfill = clamp(Number(rootCfg().panoCylVfill) || PANO_CYL_VFILL, 0.5, 1);
     state.cylScale = 0.5 * vfill * proj[5];
+    // Центральная полоса эквайреугольного кадра: без полюсов сферы.
+    state.cylVcrop = clamp(Number(rootCfg().panoCylVcrop) || PANO_CYL_VCROP, 0.2, 1);
     logPanoDebug(eye, proj, camM, { s, uOffset, vOffset, aspect });
     draw(
       gl, state.texPhoto, IDENTITY_MATRIX, [uOffset, vOffset], [s, s], [1, 1, 1],

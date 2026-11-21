@@ -205,9 +205,11 @@ def load_config(path: Path) -> dict:
     for root in cfg["roots"]:
         root["sbs"] = normalise_layout(root.get("sbs")) or "sbs"
         root["pano_mode"] = normalise_pano_mode(root.get("pano_mode")) or "sphere"
-        # Какая доля вертикального угла обзора занята картинкой в режиме
-        # «плоская стена». 1.0 — вся высота кадра до краев глаза, 0.9 — с полями.
-        root["pano_cyl_vfill"] = as_num(root.get("pano_cyl_vfill"), 0.9, 0.5, 1.0)
+        # Какая доля вертикального угла обзора занята стеной. 1.0 — до краев глаза.
+        root["pano_cyl_vfill"] = as_num(root.get("pano_cyl_vfill"), 1.0, 0.5, 1.0)
+        # Из эквайреугольного источника берем центральную полосу: полюса в
+        # верхней/нижней строке иначе выглядят как сфера. 1.0 — весь кадр.
+        root["pano_cyl_vcrop"] = as_num(root.get("pano_cyl_vcrop"), 0.5, 0.2, 1.0)
         root["swap"] = as_bool(root.get("swap"), False)
         aspect = root.get("eye_aspect")
         try:
@@ -474,7 +476,8 @@ def config_payload() -> dict:
                 "name": r["name"],
                 "sbs": r["sbs"],   # mono | sbs | half | ou | hou | pano | auto
                 "pano_mode": r.get("pano_mode", "sphere"),  # sphere | cylinder
-                "panoCylVfill": r.get("pano_cyl_vfill", 0.9),  # доля высоты кадра
+                "panoCylVfill": r.get("pano_cyl_vfill", 1.0),  # доля высоты кадра
+                "panoCylVcrop": r.get("pano_cyl_vcrop", 0.5),  # доля высоты источника
                 "swap": r["swap"],
                 "eyeAspect": r.get("eye_aspect"),
                 "distance": r.get("distance", 2.0),
