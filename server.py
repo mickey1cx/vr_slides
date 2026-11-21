@@ -205,6 +205,9 @@ def load_config(path: Path) -> dict:
     for root in cfg["roots"]:
         root["sbs"] = normalise_layout(root.get("sbs")) or "sbs"
         root["pano_mode"] = normalise_pano_mode(root.get("pano_mode")) or "sphere"
+        # Половина вертикального угла, на который разворачивается цилиндр.
+        # Меньше 50° снова показывает полюса, больше 85° слишком растягивает кадр.
+        root["pano_cyl_half_fov"] = as_num(root.get("pano_cyl_half_fov"), 75.0, 50.0, 85.0)
         root["swap"] = as_bool(root.get("swap"), False)
         aspect = root.get("eye_aspect")
         try:
@@ -471,6 +474,7 @@ def config_payload() -> dict:
                 "name": r["name"],
                 "sbs": r["sbs"],   # mono | sbs | half | ou | hou | pano | auto
                 "pano_mode": r.get("pano_mode", "sphere"),  # sphere | cylinder
+                "panoCylHalfFov": r.get("pano_cyl_half_fov", 75.0),  # градусы
                 "swap": r["swap"],
                 "eyeAspect": r.get("eye_aspect"),
                 "distance": r.get("distance", 2.0),

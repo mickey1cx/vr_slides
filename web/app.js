@@ -71,6 +71,10 @@ const PHOTO_SEGMENTS = 64; // сегменты по горизонтали дл�
 const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
 const PANO_LON = 48; // сегменты по долготе
 const PANO_LAT = 24; // сегменты по широте
+// Полюса эквайреугольного кадра лежат на v=0 и v=1. Если развернуть всю
+// текстуру только на ±57°, они попадают в поле зрения и выглядят как сфера.
+// Разворачиваем вертикаль на ±75°, чтобы верхняя/нижняя строки были вне вида.
+const PANO_CYL_HALF_FOV_DEG = 75;
 const IDENTITY_MATRIX = new Float32Array([
   1, 0, 0, 0,
   0, 1, 0, 0,
@@ -1449,13 +1453,14 @@ function logPanoDebug(eye, proj, camM, info) {
   const horiz = Math.max(Math.hypot(fx, fz), 0.0001);
   const lon = Math.atan2(fx, -fz);
   const lat = Math.atan2(fy, horiz);
-  const vWall = 0.5 + Math.tan(lat) * state.cylScale;
+  const vRaw = 0.5 + Math.tan(lat) * state.cylScale;
+  const halfFov = (Math.atan(0.5 / state.cylScale) * 180) / Math.PI;
   logClient(
     'DEBUG',
     `pano cylinder ${eye}: viewport=[${Array.from(state.viewport).map((n) => n.toFixed(0)).join(',')}] ` +
     `proj=[${f(proj.slice(0, 10))}] forward=[${f([fx, fy, fz])}] ` +
-    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} v=${vWall.toFixed(3)} ` +
-    `aspect=${info.aspect.toFixed(3)} scale=${state.cylScale.toFixed(3)} ` +
+    `lon=${lon.toFixed(3)} lat=${lat.toFixed(3)} vRaw=${vRaw.toFixed(3)} v=${clamp(vRaw, 0, 1).toFixed(3)} ` +
+    `aspect=${info.aspect.toFixed(3)} scale=${state.cylScale.toFixed(3)} halfFov=${halfFov.toFixed(1)} ` +
     `zoom=${state.zoom.toFixed(2)} uv=[${info.uOffset.toFixed(3)},${info.vOffset.toFixed(3)}] ` +
     `uvScale=${info.s.toFixed(3)}`,
   );
@@ -1477,8 +1482,12 @@ function drawPano(gl, proj, viewM, camM, eye) {
       camM[4], camM[5], camM[6],
       camM[8], camM[9], camM[10],
     ]);
-    // H = 2*PI*R/aspect: на горизонте пиксели текстуры остаются квадратными.
-    state.cylScale = clamp(aspect / (2 * Math.PI), 0.05, 1);
+    // Ограничиваем высоту сверху: H = R/scale. Без ограничения текстура 2:1
+    // заканчивается на ±57°, и полюса снова видны — это выглядит как сфера.
+    const naturalScale = aspect / (2 * Math.PI);
+    const halfFovDeg = clamp(Number(rootCfg().panoCylHalfFov) || PANO_CYL_HALF_FOV_DEG, 50, 85);
+    const poleScale = 0.5 / Math.tan((halfFovDeg * Math.PI) / 180);
+    state.cylScale = Math.min(naturalScale, poleScale);
     logPanoDebug(eye, proj, camM, { s, uOffset, vOffset, aspect });
     draw(
       gl, state.texPhoto, IDENTITY_MATRIX, [uOffset, vOffset], [s, s], [1, 1, 1],
