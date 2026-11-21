@@ -71,6 +71,9 @@ const PHOTO_SEGMENTS = 64; // сегменты по горизонтали дл�
 const PANO_RADIUS = 4; // радиус сферы: наблюдатель в центре
 const PANO_LON = 48; // сегменты по долготе
 const PANO_LAT = 24; // сегменты по широте
+// Цилиндрическая проекция уходит в бесконечность на полюсах: tan(90°).
+// Обрезаем по 2° сверху и снизу — это почти весь кадр без искажений.
+const PANO_CYL_MAX_LAT = (88 * Math.PI) / 180;
 const CURVE_STEP = 0.08; // шаг изменения изгиба за один повтор стика
 // Значения по умолчанию; сервер может переопределить их блоком "controls" в config.json.
 const DEFAULT_CONTROLS = {
@@ -228,6 +231,9 @@ const state = {
   panAxis: { x: 0, y: 0, last: 0 },
   shiftAxis: { x: 0, last: 0 },
   buttons: { stick: false, b: false, a: false, grip: false, trigger: false },
+  hudVisible: true,      // панель подсказок в VR; переключается коротким grip
+  gripModified: false,   // grip + стик менял вид: короткий grip не должен прятать панель
+  gripConsumed: false,   // grip использован для выхода из галереи: не считаем его коротким
   gallery: {
     rel: '', entries: [], cursor: 0, offset: 0, gen: 0,
     ray: null, hover: -1, navHover: '',
@@ -1103,16 +1109,27 @@ function buildPanoMeshes(gl) {
   gl.bindBuffer(gl.ARRAY_BUFFER, state.sphereVbo);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sphere), gl.STATIC_DRAW);
 
-  // Цилиндр — та же картинка, замкнутая вокруг пользователя, без полярных точек.
-  // Высота рассчитана на aspect 2; для другого aspect ее масштабирует модель.
-  const halfH = (Math.PI * PANO_RADIUS) / 2;
-  const cylinder = [];
-  for (let i = 0; i <= PANO_LON; i++) {
+  // Цилиндр — плоская картинка, замкнутая вокруг зрителя. Вершины идут по
+  // y = R*tan(lat), а v берется из lat эквайреугольного источника: горизонтальные
+  // и вертикальные линии остаются прямыми, без «шара» и сжатия у полюсов.
+  // Масштаб по высоте для aspect != 2 применяет модель в drawPano().
+  const cylinderPoint = (j, i) => {
+    const lat = -PANO_CYL_MAX_LAT + (j / PANO_LAT) * 2 * PANO_CYL_MAX_LAT;
     const u = i / PANO_LON;
-    const phi = (u - 0.5) * Math.PI * 2;
-    const x = PANO_RADIUS * Math.sin(phi);
-    const z = -PANO_RADIUS * Math.cos(phi);
-    cylinder.push(x, halfH, z, u, 1, x, -halfH, z, u, 0);
+    const lon = (u - 0.5) * Math.PI * 2;
+    return [
+      PANO_RADIUS * Math.sin(lon),
+      PANO_RADIUS * Math.tan(lat),
+      -PANO_RADIUS * Math.cos(lon),
+      u, lat / Math.PI + 0.5,
+    ];
+  };
+  const cylinder = [];
+  for (let j = 0; j < PANO_LAT; j++) {
+    for (let k = 0; k <= PANO_LON; k++) {
+      const i = (j % 2 === 0) ? k : (PANO_LON - k);
+      cylinder.push(...cylinderPoint(j, i), ...cylinderPoint(j + 1, i));
+    }
   }
   state.cylinderVertexCount = cylinder.length / 5;
   state.cylinderVbo = gl.createBuffer();
@@ -1404,8 +1421,10 @@ function drawPanoOverlay(gl, proj) {
     const mark = multiply(proj, multiply(translate(0.42, 0.24, -1), scale(0.08, 0.08, 1)));
     draw(gl, state.texMark, mark, [0, 0], [1, 1]);
   }
-  const label = multiply(proj, multiply(translate(0, -0.42, -1), scale(1.1, 0.27, 1)));
-  draw(gl, state.texLabel, label, [0, 0], [1, 1]);
+  if (state.hudVisible) {
+    const label = multiply(proj, multiply(translate(0, -0.42, -1), scale(1.1, 0.27, 1)));
+    draw(gl, state.texLabel, label, [0, 0], [1, 1]);
+  }
 }
 
 // Строка подсказки: серый заголовок блока и яркое значение.
@@ -1486,6 +1505,7 @@ function updateLabel(entry) {
       drawHintRow(ctx, right, 178, 'vrHintCurve', `${t('vrHintCurveKeys')} ${vars.curve}%`);
     }
     drawHintRow(ctx, left, 222, 'vrHintGallery', t('vrHintGalleryKeys'));
+    drawHintRow(ctx, right, 214, 'vrHintPanel', t('vrHintPanelKeys'));
   }
   uploadImage(state.gl, state.texLabel, canvas);
 }
@@ -1671,6 +1691,13 @@ function setCursor(index) {
     loadGalleryPage();
   }
   if (changed) updateGalleryHeader();
+}
+
+function toggleHud() {
+  state.hudVisible = !state.hudVisible;
+  logClient('INFO', `VR panel: ${state.hudVisible ? 'shown' : 'hidden'}`);
+  const entry = state.entries[state.current];
+  if (state.gl && entry) updateLabel(entry);
 }
 
 function toggleGallery() {
@@ -2038,7 +2065,14 @@ function handleInput(pad, time) {
   }
 
   const markToggle = aPressed && !state.buttons.a;
+  const gripRising = gripPressed && !state.buttons.grip;
+  const gripFalling = !gripPressed && state.buttons.grip;
   state.buttons.a = aPressed;
+  if (gripRising) state.gripModified = false;
+  if (gripFalling) {
+    if (state.mode === 'photo' && !state.gripModified && !state.gripConsumed) toggleHud();
+    state.gripConsumed = false;
+  }
   state.buttons.grip = gripPressed;
   state.buttons.trigger = triggerPressed;
 
@@ -2080,6 +2114,7 @@ function handleInput(pad, time) {
       const sa = state.shiftAxis;
       if (sa.x !== dx || time - sa.last > STICK_REPEAT) {
         shiftBy(dx);
+        state.gripModified = true;
         sa.x = dx;
         sa.last = time;
       }
@@ -2090,6 +2125,7 @@ function handleInput(pad, time) {
       const ca = state.curveAxis;
       if (ca.y !== dy || time - ca.last > STICK_REPEAT) {
         curveBy(dy);
+        state.gripModified = true;
         ca.y = dy;
         ca.last = time;
       }
@@ -2226,11 +2262,13 @@ function onFrame(time, frame) {
       drawCurvedPhoto(gl, proj, viewM, uv.offset, uv.scale, photoEyeModel(right));
       drawPhotoMark(gl, proj, viewM);
 
-      const labelModel = multiply(
-        photoPanModel(),
-        multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.3, 1)),
-      );
-      draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
+      if (state.hudVisible) {
+        const labelModel = multiply(
+          photoPanModel(),
+          multiply(translate(0, -state.height / 2 - 0.2, -z), scale(1.2, 0.3, 1)),
+        );
+        draw(gl, state.texLabel, multiply(proj, multiply(viewM, labelModel)), [0, 0], [1, 1]);
+      }
     }
 
     session.requestAnimationFrame(onFrame, refSpace);
@@ -2292,7 +2330,10 @@ async function enterVR() {
       openGallerySelection(target).catch(showError);
     });
     session.addEventListener('squeeze', () => {
-      if (state.mode === 'gallery') toggleGallery();
+      if (state.mode === 'gallery') {
+        state.gripConsumed = true; // этот grip возвращает из галереи, панель не трогаем
+        toggleGallery();
+      }
       // В режиме фото grip — только модификатор изгиба в сочетании со стиком.
     });
     session.addEventListener('end', () => {
@@ -2305,6 +2346,9 @@ async function enterVR() {
       state.gallery.navHover = '';
       state.gallery.deleteArmed = false;
       state.buttons = { stick: false, b: false, a: false, grip: false, trigger: false };
+      state.hudVisible = true;
+      state.gripModified = false;
+      state.gripConsumed = false;
       state.curveAxis.y = 0;
       state.panAxis = { x: 0, y: 0, last: 0 };
       state.shiftAxis = { x: 0, last: 0 };

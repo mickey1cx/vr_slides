@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere (or a closed cylinder) and viewed **from the inside** — head orientation comes from WebXR.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere or a closed cylinder and viewed **from the inside** — head orientation comes from WebXR. The cylinder is a straight wall wrapped around the viewer with a proper cylindrical projection: horizontal and vertical lines stay straight, with no sphere-like pole crop. Only 2° at the very top and bottom is cut, where the projection goes to infinity.
 
 ## Quick start
 
@@ -168,7 +168,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
    - **Right thumbstick left/right** — previous/next photo (with repeat delay when held);
    - **Thumbstick up/down** — zoom (0.6×–2.5×, current value is shown in the hint under the photo). The value is **saved separately for each source directory** and restored next time you enter VR;
    - **Trigger + thumbstick** — pan across the frame: the photo moves **in the same direction you push the stick** (up → up, right → right). The effect is visible at 1× and grows with zoom. Pan values are saved together with zoom and curvature;
-   - **Grip/squeeze + thumbstick ↔** — stereo shift for the right eye (−10%…+10% of one eye's width), useful when the SBS views drift apart. **Grip + thumbstick ↑↓** still sets the bend from 0–100%. While grip is held, the stick does not browse photos;
+   - **Grip/squeeze + thumbstick ↔** — stereo shift for the right eye (−10%…+10% of one eye's width), useful when the SBS views drift apart. **Grip + thumbstick ↑↓** still sets the bend from 0–100%. While grip is held, the stick does not browse photos. A **short grip press without the stick** hides/shows the hint panel; moving the stick while grip is held changes the view instead and does not toggle the panel;
    - **A button** — toggle a mark on the current photo. A marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint;
    - **For a 360 panorama** just turn your head — the view follows the headset orientation. The stick browses photos left/right and zooms up/down; **trigger + stick** pans longitude/latitude (seamless across the wrap). Stereo shift and screen curvature are not used for panoramas: the hint shows **Look around** and the current projection instead;
    - **Press the thumbstick** or the **B/Y** button — open the 3D gallery. Trigger and grip alone no longer browse photos in photo mode.
@@ -186,7 +186,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
 
    On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Shift` + arrows (pan), `Shift` + `[` / `]` (stereo shift), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `A` / `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
-   The panel under the photo shows the controls as a **structured layout**: the file index and name on top, then two columns — Photo / Zoom / Mark on the left and Pan / Shift / Curve on the right, with Gallery on a separate row. Current zoom, pan, shift and curvature values are drawn next to the corresponding keys. The gallery header shows its controls right in VR.
+   The panel under the photo shows the controls as a **structured layout**: the file index and name on top, then two columns — Photo / Zoom / Mark / Gallery on the left and Pan / Shift / Curve / Panel on the right. Current zoom, pan, shift and curvature values are drawn next to the corresponding keys. A short grip press hides this glass entirely (the **✓** mark stays visible); another short press brings it back. The gallery header shows its controls right in VR.
 
 #### Control settings (`controls`)
 
