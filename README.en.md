@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. In "cylinder" mode the same geometry is used only to find longitude, while the vertical coordinate comes straight from screen space. The result is a closed flat wall: horizontal and vertical lines stay straight, and there are no poles or black circles overhead at all.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. In "cylinder" mode a fullscreen quad is drawn instead: each fragment reconstructs a ray from the projection matrix and camera rotation. Longitude comes from the ray direction, vertical coordinate from the tangent of elevation. The result is a closed flat wall fixed in world space: head rotation and translation do not make the picture swim, and there are no poles or black circles overhead.
 
 ## Quick start
 
@@ -79,7 +79,7 @@ Open `config.json`:
 | `hou` | two stacked halves, each compressed vertically by 2 | `W/H` |
 | `pano` | 360° panorama, no stereo pair: the viewer is inside a sphere or in front of a closed flat wall | whole texture |
 
-Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture on a dedicated sphere mesh; the cylinder mode only changes how the vertical coordinate is sampled.
+Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture: sphere mode uses a dedicated sphere mesh, while cylinder mode uses a fullscreen quad and reconstructs a world-space ray per fragment.
 
 With `sbs: "auto"` each image is classified using several signals:
 
@@ -131,7 +131,7 @@ python server.py
 
 Available flags: `--config path`, `--http` (no TLS, for `localhost` only — WebXR still works there because `localhost` is a secure context), `--no-qr` (skip QR generation at startup), `--log` (write a journal to `logs/server_<start time>.log`).
 
-**Debugging.** Run `debug.bat` — it enables `--log`. All server requests, errors and browser messages go into a file named after the server start time. No console needed: press the **Logs** button in the page header to see the latest entries (Refresh / Clear / Close). If the server runs without `--log`, the panel only shows the browser-side buffer and reminds you about `debug.bat`. The `logs/` folder is gitignored.
+**Debugging.** Run `debug.bat` — it enables `--log`. All server requests, errors and browser messages go into a file named after the server start time. No console needed: press the **Logs** button in the page header to see the latest entries (Refresh / Clear / Close). If the server runs without `--log`, the panel only shows the browser-side buffer and reminds you about `debug.bat`. In "Cylinder (wall)" mode the client writes the gaze direction, projection parameters and sampled vertical coordinate once every 2 seconds, so you can verify the picture depends only on head rotation. The `logs/` folder is gitignored.
 
 At startup the server prints the URL and the QR file path:
 
