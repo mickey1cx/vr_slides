@@ -168,6 +168,16 @@ def equirect_image() -> Image.Image:
         d.line((x, 0, x, h - 1), fill=(170, 185, 205), width=2)
     for y in range(64, h, 64):
         d.line((0, y, w - 1, y), fill=(170, 185, 205), width=2)
+    # Номера строк нужны, чтобы видеть, какая часть кадра попадает на стену
+    # в режиме цилиндра (сейчас это центральные 50% высоты).
+    for y in range(0, h, 64):
+        d.text(
+            (6, min(y + 2, h - 22)), f"y={y:03d}",
+            fill=(255, 224, 130), font=SMALL,
+            stroke_width=1, stroke_fill=(0, 0, 0),
+        )
+    d.text((6, h - 22), "y=511", fill=(255, 224, 130), font=SMALL,
+           stroke_width=1, stroke_fill=(0, 0, 0))
     d.text((24, 24), "360 EQUIRECTANGULAR", fill=(255, 255, 255), font=FONT)
     px = img.load()
     for y in range(h):
