@@ -12,7 +12,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
-3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere or a closed cylinder and viewed **from the inside** — head orientation comes from WebXR. The cylinder is a straight wall wrapped around the viewer with a proper cylindrical projection: horizontal and vertical lines stay straight, with no sphere-like pole crop. Only 2° at the very top and bottom is cut, where the projection goes to infinity.
+3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. In "cylinder" mode the same geometry is used only to find longitude, while the vertical coordinate comes straight from screen space. The result is a closed flat wall: horizontal and vertical lines stay straight, and there are no poles or black circles overhead at all.
 
 ## Quick start
 
@@ -77,9 +77,9 @@ Open `config.json`:
 | `half` | two side-by-side halves, each compressed horizontally | `W/H` |
 | `ou` | two stacked halves, no compression | `W/H × 2` |
 | `hou` | two stacked halves, each compressed vertically by 2 | `W/H` |
-| `pano` | 360° panorama, no stereo pair: the viewer is inside a sphere or cylinder | whole texture |
+| `pano` | 360° panorama, no stereo pair: the viewer is inside a sphere or in front of a closed flat wall | whole texture |
 
-Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture on a dedicated sphere/cylinder mesh.
+Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture on a dedicated sphere mesh; the cylinder mode only changes how the vertical coordinate is sampled.
 
 With `sbs: "auto"` each image is classified using several signals:
 
@@ -93,7 +93,7 @@ The result is shown in the selected-image panel with a confidence score. Auto-de
 
 - **For directory** — auto-detect by default. Choosing a concrete layout applies it to **every image of the source** and saves it in `state.json` as `layoutDefault[rootId]`. Switching back to auto-detect removes the setting.
 - **For image** — a per-file override, plus a **Swap eyes** checkbox (disabled for 2D and 360). **From directory** removes the override.
-- **360° projection** — **Sphere** or **Cylinder**. Active when the current file is detected as a panorama; the choice is saved for the directory.
+- **360° projection** — **Sphere** or **Cylinder (wall)**. Active when the current file is detected as a panorama; the choice is saved for the directory.
 
 Priority: **image override → directory layout → `config.json` → auto-detection**. The directory setting is a safety net for folders where every photo uses the same format but the detector gets it wrong.
 
@@ -222,7 +222,7 @@ Each file is a flat key → string map. `__name` is the language name shown in t
 }
 ```
 
-The panel under the photo is drawn from the keys `vrHintPhoto`, `vrHintNavKeys`, `vrHintZoom`, `vrHintZoomKeys`, `vrHintMark`, `vrHintMarkKeys`, `vrHintPan`, `vrHintPanKeys`, `vrHintShift`, `vrHintShiftKeys`, `vrHintCurve`, `vrHintCurveKeys`, `vrHintLook`, `vrHintLookKeys`, `vrHintGallery`, `vrHintGalleryKeys`. For panoramas, **Look around** and the current projection are shown instead of stereo shift and curvature. If you only translate `vrLabelHint` (as in the example above), the hint is drawn as a single auto-wrapped line — older language files keep working.
+The panel under the photo is drawn from the keys `vrHintPhoto`, `vrHintNavKeys`, `vrHintZoom`, `vrHintZoomKeys`, `vrHintMark`, `vrHintMarkKeys`, `vrHintPan`, `vrHintPanKeys`, `vrHintShift`, `vrHintShiftKeys`, `vrHintCurve`, `vrHintCurveKeys`, `vrHintLook`, `vrHintLookKeys`, `vrHintGallery`, `vrHintGalleryKeys`, `vrHintPanel`, `vrHintPanelKeys`. For panoramas, **Look around** and the current projection are shown instead of stereo shift and curvature. If you only translate `vrLabelHint` (as in the example above), the hint is drawn as a single auto-wrapped line — older language files keep working.
 
 Just translate the keys from `web/i18n/en.json` — the new language appears in the list after reloading the page (no server restart needed).
 

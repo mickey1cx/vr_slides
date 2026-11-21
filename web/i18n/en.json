@@ -42,7 +42,7 @@
   "layoutPano": "360° panorama (Equirectangular)",
   "panoProjection": "360° projection",
   "panoSphere": "Sphere",
-  "panoCylinder": "Cylinder",
+  "panoCylinder": "Cylinder (wall)",
   "layoutSwap": "Swap eyes (RL / BT)",
   "layoutDetected": "{source}, {confidence}%",
   "layoutPinned": "set for this image",
