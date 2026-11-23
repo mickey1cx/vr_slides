@@ -400,6 +400,50 @@ function pushHistoryForDir(rel) {
   } catch { /* история может быть недоступна */ }
 }
 
+// Кнопка B в 2D Quest Browser иногда съедается браузером при выходе из VR:
+// popstate до страницы не доходит. Дублируем обработку через Gamepad API.
+const BACK_DEDUPE_MS = 800;
+let lastGamepadB = false;
+let gamepadBackPending = false;
+let lastBackHandledAt = 0;
+
+function gamepadBPressed() {
+  if (!navigator.getGamepads) return false;
+  try {
+    for (const pad of navigator.getGamepads()) {
+      if (!pad) continue;
+      // standard: B = buttons[1]; xr-standard: B = buttons[5].
+      const index = (pad.mapping === 'standard' || !pad.buttons[5]) ? 1 : 5;
+      const btn = pad.buttons[index];
+      if (btn && btn.pressed) return true;
+    }
+  } catch { /* Gamepad API недоступна — работает браузерный Back */ }
+  return false;
+}
+
+function pollGamepadBack() {
+  if (state.session) { lastGamepadB = false; return; }
+  const pressed = gamepadBPressed();
+  if (pressed && !lastGamepadB) onGamepadBack();
+  lastGamepadB = pressed;
+}
+
+function onGamepadBack() {
+  if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) return;
+  lastBackHandledAt = Date.now();
+  // Браузер параллельно нажмет Back: помечаем его popstate как свой.
+  gamepadBackPending = true;
+  setTimeout(() => { gamepadBackPending = false; }, 1500);
+  const rel = activeDirRel();
+  if (!hasParentDir(rel)) {
+    logClient('INFO', 'gamepad B: root, stay');
+    return;
+  }
+  const parent = parentDirRel(rel);
+  logClient('INFO', `gamepad B: ${rel || '/'} -> ${parent || '/'}`);
+  goUpActiveDir().catch(showError);
+}
+
 const FORWARD_ECHO_MS = 5000;
 let historyForwarding = false;
 let historyForwardUntil = 0;
@@ -414,6 +458,15 @@ function extendForwardEcho(where) {
 }
 
 function onPopState(event) {
+  if (gamepadBackPending) {
+    gamepadBackPending = false;
+    historyForwarding = true;
+    historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
+    try { history.forward(); } catch { /* история может быть недоступна */ }
+    syncHistoryMarker();
+    logClient('INFO', 'B/back: browser echo consumed');
+    return;
+  }
   if (historyForwarding && Date.now() < historyForwardUntil) {
     historyForwarding = false;
     historyForwardUntil = 0;
@@ -422,6 +475,16 @@ function onPopState(event) {
     return;
   }
   historyForwarding = false; // просроченный флаг от приостановленной вкладки
+  if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) {
+    // gamepad уже обработал это же нажатие, браузер лишь дублирует Back.
+    historyForwarding = true;
+    historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
+    try { history.forward(); } catch { /* история может быть недоступна */ }
+    syncHistoryMarker();
+    logClient('INFO', 'B/back: gamepad duplicate consumed');
+    return;
+  }
+  lastBackHandledAt = Date.now();
   const rel = activeDirRel();
   logClient('INFO', `B/back: pop rel=${rel || '/'}`);
   // Возвращаемся на свою запись: так Back не выведет со страницы. Делаем это
@@ -798,6 +861,7 @@ async function init() {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) extendForwardEcho('visible');
   });
+  setInterval(pollGamepadBack, 50);
 
   if (cfg.roots.length) {
     const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
