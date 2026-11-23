@@ -495,6 +495,9 @@ function checkOculusPostVrInput() {
     lastOculusB = false;
     return;
   }
+  if (!document.hasFocus()) {
+    try { window.focus(); } catch { /* фокус может быть недоступен */ }
+  }
   const pressed = oculusGamepadBPressed();
   if (pressed && !lastOculusB) {
     logClient('INFO', 'oculus: B detected via gamepad');
@@ -508,15 +511,18 @@ function checkOculusPostVrInput() {
 // не станет активной, чтобы первое же нажатие дошло до popstate.
 function restore2DFocus(where, attempt = 0) {
   if (BROWSER_KIND !== 'oculus') return;
+  let focused = false;
   try {
     window.focus();
     const target = $('#vrBtn') || document.body;
     if (target && target.focus) target.focus({ preventScroll: true });
+    focused = document.hasFocus();
   } catch { /* фокус может быть недоступен */ }
-  const focused = document.hasFocus();
-  logClient('INFO', `oculus: focus retry ${where} ${attempt}, hasFocus=${focused}`);
-  if (!focused && attempt < 6) {
-    setTimeout(() => restore2DFocus(where, attempt + 1), 150 * (attempt + 1));
+  if (focused || attempt === 0 || attempt % 20 === 0 || attempt >= 99) {
+    logClient('INFO', `oculus: focus retry ${where} ${attempt}, hasFocus=${focused}`);
+  }
+  if (!focused && attempt < 100) {
+    setTimeout(() => restore2DFocus(where, attempt + 1), 50);
   }
 }
 
