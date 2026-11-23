@@ -1131,11 +1131,12 @@ function initGL(gl) {
     attribute vec3 aPos;
     attribute vec2 aUv;
     uniform mat4 uMVP;
-    uniform mediump vec2 uUvOffset;
-    uniform mediump vec2 uUvScale;
     varying vec2 vUv;
     void main() {
-      vUv = uUvOffset + aUv * uUvScale;
+      // Сдвиг/масштаб применяются один раз во фрагментном шейдере: цилиндр
+      // пересчитывает uv из луча, и если делать это ещё здесь, стереопары
+      // получают двойное преобразование и неверные области глаза.
+      vUv = aUv;
       gl_Position = uMVP * vec4(aPos, 1.0);
     }`;
   const fs = `
