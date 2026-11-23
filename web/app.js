@@ -400,19 +400,35 @@ function pushHistoryForDir(rel) {
   } catch { /* история может быть недоступна */ }
 }
 
+const FORWARD_ECHO_MS = 5000;
 let historyForwarding = false;
+let historyForwardUntil = 0;
+
+// WebXR приостанавливает JS вкладки: эхо от history.forward() может прийти
+// только после выхода из VR. Продлеваем окно ожидания на границах сессии —
+// иначе запоздалое эхо считается новым нажатием B и съедает следующее.
+function extendForwardEcho(where) {
+  if (!historyForwarding) return;
+  historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
+  logClient('INFO', `history: extend forward (${where})`);
+}
+
 function onPopState(event) {
-  if (historyForwarding) {
+  if (historyForwarding && Date.now() < historyForwardUntil) {
     historyForwarding = false;
+    historyForwardUntil = 0;
     syncHistoryMarker();
+    logClient('INFO', 'B/back: forward echo');
     return;
   }
+  historyForwarding = false; // просроченный флаг от приостановленной вкладки
   const rel = activeDirRel();
+  logClient('INFO', `B/back: pop rel=${rel || '/'}`);
   // Возвращаемся на свою запись: так Back не выведет со страницы. Делаем это
   // forward, а не pushState — внутри popstate Quest Browser его игнорирует.
   historyForwarding = true;
+  historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
   try { history.forward(); } catch { /* история может быть недоступна */ }
-  setTimeout(() => { historyForwarding = false; }, 100);
   if (!hasParentDir(rel)) {
     logClient('INFO', 'B/back: root, stay');
     return;
@@ -778,6 +794,10 @@ async function init() {
   window.addEventListener('pointerdown', armHistory, { capture: true });
   window.addEventListener('keydown', armHistory, { capture: true });
   window.addEventListener('popstate', onPopState);
+  window.addEventListener('pageshow', () => extendForwardEcho('pageshow'));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) extendForwardEcho('visible');
+  });
 
   if (cfg.roots.length) {
     const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
@@ -2483,6 +2503,7 @@ function onFrame(time, frame) {
 }
 
 async function enterVR() {
+  extendForwardEcho('vr enter');
   if (!navigator.xr) {
     throw new Error(t('errNoWebXR'));
   }
@@ -2541,6 +2562,8 @@ async function enterVR() {
     });
     session.addEventListener('end', () => {
       logClient('INFO', 'VR session ended');
+      extendForwardEcho('vr end');
+      syncHistoryMarker();
       state.session = null;
       clearGLState();
       state.mode = 'photo';
