@@ -318,7 +318,7 @@ def reset_image_meta_stats() -> None:
     global IMAGE_META_STATS
     IMAGE_META_STATS = {
         "files": 0, "hits": 0, "total": 0.0, "stat": 0.0, "lookup": 0.0,
-        "open": 0.0, "info": 0.0, "exif": 0.0, "regex": 0.0,
+        "open": 0.0, "info": 0.0, "regex": 0.0,
         "scan": 0.0, "store": 0.0, "slow": [],
     }
 
@@ -392,7 +392,7 @@ def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
     dims = None
     pano = bool(PANO_NAME.search(path.stem))
     name_elapsed = time.perf_counter() - name_started
-    open_ms = info_ms = exif_ms = regex_ms = scan_ms = 0.0
+    open_ms = info_ms = regex_ms = scan_ms = 0.0
     if Image is not None:
         # Pillow читает только заголовок и метаданные: это на порядок быстрее,
         # чем сканировать десятки КБ в каждом файле большого каталога.
@@ -401,15 +401,12 @@ def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
                 open_ms = (time.perf_counter() - name_started - name_elapsed) * 1000
                 dims = im.size
                 if not pano:
+                    # Достаточно im.info: XMP и EXIF-заголовки Pillow уже кладет
+                    # туда (в виде bytes), а getexif() на больших архивах стоит
+                    # десятки секунд и список каталога тормозит без нужды.
                     info_started = time.perf_counter()
                     meta = str(im.info)
                     info_ms = (time.perf_counter() - info_started) * 1000
-                    exif_started = time.perf_counter()
-                    try:
-                        meta += " " + str(im.getexif())
-                    except Exception:
-                        pass
-                    exif_ms = (time.perf_counter() - exif_started) * 1000
                     regex_started = time.perf_counter()
                     pano = bool(PANO_MARKERS.search(meta))
                     regex_ms = (time.perf_counter() - regex_started) * 1000
@@ -445,12 +442,11 @@ def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
         stats["lookup"] += lookup_ms
         stats["open"] += open_ms
         stats["info"] += info_ms
-        stats["exif"] += exif_ms
         stats["regex"] += regex_ms
         stats["scan"] += scan_ms
         stats["store"] += store_ms
         if total_ms > 200:
-            stats["slow"].append((path.name, round(total_ms), round(open_ms), round(exif_ms)))
+            stats["slow"].append((path.name, round(total_ms), round(open_ms)))
             stats["slow"] = sorted(stats["slow"], key=lambda x: -x[1])[:8]
     return dims, pano
 
@@ -490,10 +486,10 @@ def list_dir(root: dict, rel: str) -> dict:
     save_ms = (time.perf_counter() - save_started) * 1000
     s = IMAGE_META_STATS
     log("INFO", "list breakdown: iterdir=%.1f ms, image_meta=%.1f ms "
-        "(stat=%.1f, lookup=%.1f, open=%.1f, info=%.1f, exif=%.1f, regex=%.1f, "
+        "(stat=%.1f, lookup=%.1f, open=%.1f, info=%.1f, regex=%.1f, "
         "scan=%.1f, store=%.1f, hits=%d/%d), save_cache=%.1f ms, slow=%s",
         iter_ms, s["total"], s["stat"], s["lookup"], s["open"], s["info"],
-        s["exif"], s["regex"], s["scan"], s["store"], s["hits"], s["files"],
+        s["regex"], s["scan"], s["store"], s["hits"], s["files"],
         save_ms, s["slow"] or "-")
     return {"root": root["id"], "path": rel, "entries": entries}
 
