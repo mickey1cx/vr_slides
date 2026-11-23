@@ -150,6 +150,39 @@ The QR encodes the same address that is used for the certificate. If the IP chan
 
 > Quest 3 has no general built-in QR scanner: its system QR support is limited to Wi‑Fi setup. To open the link from a QR, install any third-party QR scanner app on Quest (App Lab/SideQuest), or just type the URL manually. After the first visit you can bookmark it in Quest Browser.
 
+### Open the URL on Quest via ADB (optional)
+
+To make the server wake the headset and open the gallery at startup, create `adb.json` next to `config.json` using `adb.example.json` as a template. The minimum is the path to adb:
+
+```json
+{
+  "adb_path": "adb.exe"
+}
+```
+
+`adb_path` must be on PATH (for example `adb.exe`) or contain the full path to `adb.exe`.
+
+If the file is missing, empty, or `adb_path` is not set, the feature is disabled and the server behaves as before.
+
+| Field | Meaning |
+|---|---|
+| `adb_path` | `adb.exe` when adb is on PATH, or the full path to `adb.exe`. Relative paths are resolved from the project root. |
+| `device` | Serial number or `IP:port`. For `IP:port` the server runs `adb connect` itself if the device is not visible. Empty — first device from `adb devices`; if there is none, discover `_adb-tls-connect._tcp` with `adb mdns services` and connect to the first reachable device. |
+| `browser_package` | For example `com.oculus.browser`. Empty — default browser via `ACTION_VIEW`. |
+| `wake` | Send `KEYCODE_WAKEUP` before launching. Default `true`. |
+| `launch_path` | Path appended to the server URL. Default `/`. |
+| `kill_adb_after_launch` | Run `adb kill-server` after a successful launch so the ADB daemon does not stay in the process list. Default `false`. |
+
+At startup the server checks `adb devices`, wakes the device if needed and runs `am start` with the gallery URL. Developer mode and USB or Wi‑Fi debugging must be enabled on the headset. The self-signed certificate still has to be accepted on first open — ADB does not bypass that. If several devices are connected and `device` is empty, the first one is used with a warning in the log. `adb.json` is gitignored.
+
+> **Experimental.** Opening the gallery over ADB Wi‑Fi is currently experimental and requires Wi‑Fi debugging to be enabled on the headset. USB is more reliable.
+
+**Wi‑Fi.** With `device` left empty, the server finds the `_adb-tls-connect._tcp` service through `adb mdns services` at startup and connects to the first device. Discovery is retried a few times because the mDNS announcement may appear with a delay. The current port is discovered automatically, so there is no need to copy it into the config.
+
+If `device` is explicitly set to `IP:port`, discovery is not used: the server connects only to that address and you must update it when the port changes. No cable is needed after enabling Wi‑Fi debugging. The alternative is to run `adb tcpip 5555` once over USB, but TCP mode may reset after a headset reboot, so the built-in setting is more reliable.
+
+If you enable `kill_adb_after_launch: true`, `adb kill-server` also drops the Wi‑Fi connection. An empty `device` survives this: the next server start finds the device through mDNS again. With an explicit `IP:port`, the server runs `adb connect` to the saved address.
+
 ### Example directory
 
 The bundle includes an `example/` directory, described in `config.json` as the `demo` source ("Example"). It contains samples for every supported layout: `01_mono_2d.jpg`, `02_sbs_full.jpg`, `03_sbs_half.jpg`, `04_ou_full.jpg`, `05_hou.jpg`, plus `06_sbs_rl.jpg` and `07_ou_bt.jpg` with swapped eyes/halves. For detection tests there are `08_big_disparity.jpg` (large disparity), `09_pair_1536.jpg` (vertical 1536×1280 half pair with no hint in the name), `11_pair_1920.jpg` (vertical 1920×1280 full-SBS) and `10_plain_1536.jpg` (an ordinary photo of the same size as a control). For 360 there is `12_pano_360.png` — an equirectangular 2:1 image with standard GPano XMP metadata. The old `sample_sbs.jpg` is kept as well. Pick `demo` in the **Catalog** dropdown to try the app without your own photos (`sbs: "auto"` is enabled for it):
@@ -272,6 +305,8 @@ The server runs on plain Python 3.10+: no external packages required.
 
 ```
 config.json        — directories and display settings
+adb.json           — local ADB settings (do not commit)
+adb.example.json   — example ADB settings
 server.py          — HTTP(S) server and JSON API
 tools/make_cert.py — self-signed certificate with IP SAN
 tools/make_examples.py — generator of test images for all layouts in example/

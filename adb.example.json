@@ -1,0 +1,8 @@
+{
+  "adb_path": "adb.exe",
+  "device": "",
+  "browser_package": "",
+  "wake": true,
+  "launch_path": "/",
+  "kill_adb_after_launch": false
+}

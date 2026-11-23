@@ -6,6 +6,9 @@ state.json.tmp
 __pycache__/
 *.pyc
 
+# Local ADB launcher settings (see adb.example.json)
+adb.json
+
 # Временные файлы разработки (не используются сервером)
 .temp/*
 !.temp/.gitkeep

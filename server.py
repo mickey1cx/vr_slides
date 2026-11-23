@@ -12,8 +12,10 @@ import io
 import json
 import mimetypes
 import re
+import shutil
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -62,6 +64,7 @@ if sys.platform == "win32":
         ]
 
 CONFIG: dict = {}
+ADB_CONFIG: dict = {"enabled": False}
 STATE: dict = {
     "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
     "panoMode": {}, "lang": None, "root": None, "primaryHand": "right",
@@ -220,6 +223,79 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
+def load_adb_config(path: Path) -> dict:
+    """Читает необязательные настройки отправки URL на Quest через ADB.
+
+    Пустой/отсутствующий файл или пустой adb_path означают, что функция
+    выключена: основной сервер работает как раньше и лишнего не делает.
+    """
+    result = {
+        "enabled": False,
+        "adb_path": "",
+        "device": "",
+        "browser_package": "",
+        "wake": True,
+        "launch_path": "/",
+        "kill_adb_after_launch": False,
+    }
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return result
+    except (OSError, ValueError) as exc:
+        log("WARN", "ADB config is invalid (%s): %s", path, exc)
+        return result
+    if not isinstance(raw, dict) or not raw:
+        return result
+
+    adb_path = str(raw.get("adb_path") or "").strip()
+    if not adb_path:
+        return result
+    candidate = Path(adb_path).expanduser()
+    if not candidate.is_absolute() and len(candidate.parts) == 1:
+        found = shutil.which(adb_path)
+        if found:
+            resolved = found
+        else:
+            local = BASE_DIR / candidate
+            if local.is_file():
+                resolved = str(local)
+            else:
+                log("WARN", "ADB executable not found in PATH: %s", adb_path)
+                return result
+    else:
+        if not candidate.is_absolute():
+            candidate = BASE_DIR / candidate
+        if not candidate.is_file():
+            log("WARN", "ADB executable not found: %s", candidate)
+            return result
+        resolved = str(candidate)
+
+    device = str(raw.get("device") or "").strip()
+    if device and not re.fullmatch(r"[A-Za-z0-9._:\-]+", device):
+        log("WARN", "ADB device has an unsupported format, ignoring: %s", device)
+        device = ""
+    package = str(raw.get("browser_package") or "").strip()
+    if package and not re.fullmatch(r"[A-Za-z0-9_.]+", package):
+        log("WARN", "ADB browser package has an unsupported format, ignoring: %s", package)
+        package = ""
+    launch = str(raw.get("launch_path") or "/").strip() or "/"
+    if not launch.startswith("/"):
+        launch = "/" + launch
+
+    result.update({
+        "enabled": True,
+        "adb_path": resolved,
+        "device": device,
+        "browser_package": package,
+        "wake": as_bool(raw.get("wake"), True),
+        "launch_path": launch,
+        "kill_adb_after_launch": as_bool(raw.get("kill_adb_after_launch"), False),
+    })
+    log("INFO", "ADB launch enabled: %s, device=%s", resolved, device or "auto")
+    return result
+
+
 def local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -236,6 +312,174 @@ def connection_url(http: bool = False) -> str:
     scheme = "http" if http else "https"
     host = CONFIG.get("ip") or local_ip()
     return f"{scheme}://{host}:{CONFIG['port']}"
+
+
+def adb_run(args: list[str], timeout: int = 15) -> subprocess.CompletedProcess | None:
+    """Выполняет adb, не давая серверу упасть из-за отсутствия устройства."""
+    cmd = [ADB_CONFIG["adb_path"], *args]
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        log("ERROR", "ADB executable not found: %s", ADB_CONFIG["adb_path"])
+    except subprocess.TimeoutExpired:
+        log("ERROR", "ADB command timed out: %s", " ".join(cmd))
+    except OSError as exc:
+        log("ERROR", "ADB command failed: %s: %s", " ".join(cmd), exc)
+    return None
+
+
+def adb_list_devices() -> list[str] | None:
+    """Список доступных устройств из `adb devices`."""
+    result = adb_run(["devices"], timeout=10)
+    if result is None:
+        return None
+    if result.returncode != 0:
+        log("WARN", "ADB devices failed: %s", (result.stderr or result.stdout).strip())
+        return None
+
+    devices = []
+    for line in result.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            devices.append(parts[0])
+    return devices
+
+
+def adb_discover_targets(attempts: int = 5, delay: float = 1.0) -> list[str] | None:
+    """Ищет беспроводные ADB-устройства через `adb mdns services`.
+
+    Объявление mDNS появляется не сразу, особенно после старта adb server,
+    поэтому делаем несколько попыток с небольшой паузой.
+    """
+    for attempt in range(attempts):
+        result = adb_run(["mdns", "services"], timeout=10)
+        if result is None:
+            return None
+        if result.returncode != 0:
+            log("WARN", "ADB mdns services failed: %s", (result.stderr or result.stdout).strip())
+            return None
+
+        targets = []
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if "_adb-tls-connect._tcp" not in parts or not parts:
+                continue
+            target = parts[-1]
+            if re.fullmatch(r"[A-Za-z0-9._-]+:\d+", target) or re.fullmatch(
+                r"\[[0-9A-Fa-f:.%]+\]:\d+", target
+            ):
+                if target not in targets:
+                    targets.append(target)
+        if targets:
+            return targets
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    return []
+
+
+def adb_wait_for_device(target: str, attempts: int = 10, delay: float = 1.0) -> bool:
+    """Ждет появления устройства после adb connect."""
+    for _ in range(attempts):
+        devices = adb_list_devices()
+        if devices is not None and target in devices:
+            return True
+        time.sleep(delay)
+    return False
+
+
+def adb_pick_device() -> str | None:
+    """Возвращает серийный номер для adb -s или None, если устройство недоступно."""
+    devices = adb_list_devices()
+    if devices is None:
+        return None
+
+    configured = ADB_CONFIG.get("device", "")
+    if configured:
+        if configured in devices:
+            return configured
+        if re.fullmatch(r"[A-Za-z0-9._-]+:\d+", configured):
+            log("INFO", "ADB connecting to %s", configured)
+            result = adb_run(["connect", configured], timeout=15)
+            if result is not None:
+                detail = (result.stderr or result.stdout).strip()
+                if detail:
+                    log("INFO", "ADB connect: %s", detail)
+            if adb_wait_for_device(configured):
+                return configured
+            log("WARN", "ADB device is not available after connect: %s", configured)
+            return None
+        log("WARN", "ADB device is not available: %s", configured)
+        return None
+    if not devices:
+        targets = adb_discover_targets()
+        if not targets:
+            log("WARN", "No ADB device is connected and no Wi-Fi target was discovered")
+            return None
+        log("INFO", "ADB Wi-Fi targets found: %s", ", ".join(targets))
+        for target in targets:
+            log("INFO", "ADB connecting to discovered device: %s", target)
+            result = adb_run(["connect", target], timeout=15)
+            if result is not None:
+                detail = (result.stderr or result.stdout).strip()
+                if detail:
+                    log("INFO", "ADB connect: %s", detail)
+            if adb_wait_for_device(target):
+                return target
+        log("WARN", "Could not connect to any discovered ADB device")
+        return None
+    if len(devices) > 1:
+        log("WARN", "Several ADB devices found, using the first one: %s", devices[0])
+    return devices[0]
+
+
+def adb_open_url(url: str) -> None:
+    """Будит Quest и открывает URL в браузере по умолчанию."""
+    if not ADB_CONFIG.get("enabled"):
+        return
+    device = adb_pick_device()
+    if not device:
+        return
+    prefix = ["-s", device]
+
+    if ADB_CONFIG.get("wake", True):
+        result = adb_run(prefix + ["shell", "input", "keyevent", "KEYCODE_WAKEUP"], timeout=10)
+        if result is None or result.returncode != 0:
+            detail = "" if result is None else (result.stderr or result.stdout).strip()
+            log("WARN", "ADB wake failed%s", f": {detail}" if detail else "")
+        else:
+            log("INFO", "ADB: Quest woke up")
+
+    cmd = prefix + ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+    package = ADB_CONFIG.get("browser_package", "")
+    if package:
+        cmd.extend(["-p", package])
+    result = adb_run(cmd, timeout=15)
+    if result is None:
+        return
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or "unknown error"
+        log("ERROR", "ADB launch failed: %s", detail)
+        return
+    log("INFO", "ADB opened URL on Quest: %s", url)
+    detail = result.stdout.strip()
+    if detail:
+        log("INFO", "ADB am start: %s", detail)
+
+    if ADB_CONFIG.get("kill_adb_after_launch"):
+        kill = adb_run(["kill-server"], timeout=10)
+        if kill is None:
+            return
+        if kill.returncode != 0:
+            log("WARN", "ADB kill-server failed: %s", (kill.stderr or kill.stdout).strip())
+        else:
+            log("INFO", "ADB server stopped after launch")
 
 
 def make_qr_png(url: str, path: Path) -> bytes | None:
@@ -592,6 +836,7 @@ def config_payload() -> dict:
         "port": CONFIG["port"],
         "secure": True,
         "qr": QR_PNG is not None,
+        "adb": ADB_CONFIG.get("enabled", False),
         "controls": CONFIG["controls"],
         "language": CONFIG["language"],
         "log": LOG_PATH is not None,
@@ -1046,8 +1291,9 @@ def main():
 
     setup_logging(args.log)
 
-    global CONFIG
+    global CONFIG, ADB_CONFIG
     CONFIG = load_config(Path(args.config))
+    ADB_CONFIG = load_adb_config(Path(args.config).with_name("adb.json"))
     THUMB_DIR.mkdir(exist_ok=True)
     load_image_meta_cache()
     load_state()
@@ -1079,6 +1325,10 @@ def main():
     if args.http:
         log("WARN", "--http: для Quest 3 нужен HTTPS, иначе WebXR не запустится.")
     log("INFO", "Сервер запущен, Ctrl+C для остановки.")
+    if ADB_CONFIG.get("enabled"):
+        launch_url = url.rstrip("/") + ADB_CONFIG.get("launch_path", "/")
+        log("INFO", "ADB: launching gallery on Quest: %s", launch_url)
+        threading.Thread(target=adb_open_url, args=(launch_url,), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
