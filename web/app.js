@@ -343,6 +343,75 @@ function showError(err) {
   box.hidden = false;
 }
 
+// Кнопка B правого контроллера в 2D-режиме Quest Browser работает как назад.
+// Держим один маркер в истории: когда B вызывает popstate и мы не в корне
+// коллекции, отменяем уход со страницы и поднимаемся на каталог выше.
+const HISTORY_MARKER = 'vrslidesDir';
+
+function dirParts(rel) {
+  return String(rel || '').split('/').filter(Boolean);
+}
+
+function hasParentDir(rel) {
+  return dirParts(rel).length > 0;
+}
+
+function parentDirRel(rel) {
+  const parts = dirParts(rel);
+  parts.pop();
+  return parts.join('/');
+}
+
+function activeDirRel() {
+  return state.mode === 'gallery' ? state.gallery.rel : state.rel;
+}
+
+function historyMarker(rel = activeDirRel()) {
+  return { [HISTORY_MARKER]: true, root: state.rootId, rel };
+}
+
+function syncHistoryMarker() {
+  try {
+    history.replaceState(historyMarker(), '');
+  } catch { /* история может быть недоступна */ }
+}
+
+// Один дополнительный маркер нужен, чтобы Back оставался внутри документа:
+// иначе браузер уйдет на предыдущую страницу до вызова popstate.
+function initHistoryMarker() {
+  try {
+    history.pushState(historyMarker(), '');
+  } catch { /* история может быть недоступна */ }
+}
+
+function onPopState(event) {
+  // Возврат к нашему же маркеру (например, Forward) — просто обновляем его.
+  if (event.state && event.state[HISTORY_MARKER] && event.state.root === state.rootId) {
+    syncHistoryMarker();
+    return;
+  }
+  const rel = activeDirRel();
+  if (!hasParentDir(rel)) {
+    // Мы уже на маркере документа; второй back завершает обычный возврат.
+    try { history.back(); } catch { /* история может быть недоступна */ }
+    return;
+  }
+  const parent = parentDirRel(rel);
+  // Это должен быть синхронный pushState: он отменяет переход браузера назад.
+  try {
+    history.pushState(historyMarker(parent), '');
+  } catch { /* без History API B останется обычным "назад" */ }
+  logClient('INFO', `B/back: ${rel || '/'} -> ${parent || '/'}`);
+  goUpActiveDir().catch(showError);
+}
+
+function goUpActiveDir() {
+  if (state.mode === 'gallery') return openGallerySelection(0);
+  if (!hasParentDir(state.rel)) return Promise.resolve();
+  state.rel = parentDirRel(state.rel);
+  return list();
+}
+
 function refreshDebugLog() {
   const pre = $('#debugLog');
   const meta = $('#debugMeta');
@@ -680,12 +749,7 @@ async function init() {
   $('#panoModeSelect').addEventListener('change', () => savePanoMode().catch(showError));
   $('#layoutSwap').addEventListener('change', () => saveLayoutOverride().catch(showError));
 
-  $('#upBtn').addEventListener('click', () => {
-    const parts = state.rel.split('/').filter(Boolean);
-    parts.pop();
-    state.rel = parts.join('/');
-    list().catch(showError);
-  });
+  $('#upBtn').addEventListener('click', () => goUpActiveDir().catch(showError));
 
   $('#firstBtn').addEventListener('click', () => jumpToEdge(-1));
   $('#lastBtn').addEventListener('click', () => jumpToEdge(1));
@@ -694,6 +758,7 @@ async function init() {
 
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));
+  window.addEventListener('popstate', onPopState);
 
   if (cfg.roots.length) {
     const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
@@ -702,6 +767,7 @@ async function init() {
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
     setCurve(state.curveByRoot[state.rootId] ?? 0, false);
     applyViewFromRoot(state.rootId);
+    initHistoryMarker();
     await list();
   } else {
     showError(t('errNoRoots'));
@@ -726,6 +792,7 @@ function applyListing(data, clearSelection = true) {
   renderGrid();
   updateSelectionUI();
   updateLayoutUI(null, null);
+  syncHistoryMarker();
 }
 
 function renderGrid() {
@@ -863,6 +930,7 @@ async function refreshGallery() {
   loadGalleryPage();
   updateGalleryHeader();
   updateSelectionUI();
+  syncHistoryMarker();
 }
 
 async function deleteSelected(confirmFirst = true) {
@@ -1937,6 +2005,7 @@ async function openGallerySelection(index = state.gallery.cursor) {
   g.deleteArmed = false;
   loadGalleryPage();
   updateGalleryHeader();
+  syncHistoryMarker();
 }
 
 function renderGallery(gl, proj, viewM) {
@@ -2269,6 +2338,12 @@ function handleInput(pad, time) {
 function onKey(e) {
   if (e.key === 'Escape' && state.session) {
     state.session.end();
+    return;
+  }
+  if (!state.session && (e.key === 'b' || e.key === 'B') && hasParentDir(activeDirRel())) {
+    logClient('INFO', `B key: ${activeDirRel() || '/'} -> ${parentDirRel(activeDirRel()) || '/'}`);
+    goUpActiveDir().catch(showError);
+    e.preventDefault();
     return;
   }
   if (e.key === 'g' || e.key === 'G') {
