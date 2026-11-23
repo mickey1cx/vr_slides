@@ -439,6 +439,7 @@ function checkSilentHistoryNav() {
     lastBackHandledAt = Date.now();
     historyForwarding = true;
     historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
+    historyForwardExpectedRel = rel;
     try { history.forward(); } catch { /* история может быть недоступна */ }
     syncHistoryMarker();
     return;
@@ -502,9 +503,27 @@ function checkOculusPostVrInput() {
   lastOculusB = pressed;
 }
 
+// После VR Oculus Browser оставляет документ без фокуса: первое B уходит в
+// оболочку и лишь возвращает фокус. Повторяем focus до тех пор, пока страница
+// не станет активной, чтобы первое же нажатие дошло до popstate.
+function restore2DFocus(where, attempt = 0) {
+  if (BROWSER_KIND !== 'oculus') return;
+  try {
+    window.focus();
+    const target = $('#vrBtn') || document.body;
+    if (target && target.focus) target.focus({ preventScroll: true });
+  } catch { /* фокус может быть недоступен */ }
+  const focused = document.hasFocus();
+  logClient('INFO', `oculus: focus retry ${where} ${attempt}, hasFocus=${focused}`);
+  if (!focused && attempt < 6) {
+    setTimeout(() => restore2DFocus(where, attempt + 1), 150 * (attempt + 1));
+  }
+}
+
 const FORWARD_ECHO_MS = 5000;
 let historyForwarding = false;
 let historyForwardUntil = 0;
+let historyForwardExpectedRel = null;
 
 // WebXR приостанавливает JS вкладки: эхо от history.forward() может прийти
 // только после выхода из VR. Продлеваем окно ожидания на границах сессии —
@@ -516,17 +535,22 @@ function extendForwardEcho(where) {
 }
 
 function onPopState(event) {
-  if (historyForwarding && Date.now() < historyForwardUntil) {
+  const st = event && event.state && typeof event.state === 'object' ? event.state : null;
+  const eventRel = st && st[HISTORY_MARKER] ? st.rel : null;
+  if (historyForwarding && Date.now() < historyForwardUntil
+      && (historyForwardExpectedRel === null || eventRel === historyForwardExpectedRel)) {
     historyForwarding = false;
     historyForwardUntil = 0;
+    historyForwardExpectedRel = null;
     syncHistoryMarker();
     logClient('INFO', 'B/back: forward echo');
     return;
   }
   historyForwarding = false; // просроченный флаг от приостановленной вкладки
+  historyForwardExpectedRel = null;
   if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) {
     // тихий переход уже обработал это нажатие, popstate лишь дублирует его.
-    logClient('INFO', 'B/back: duplicate consumed');
+    logClient('INFO', `B/back: duplicate consumed (rel=${eventRel ?? 'none'})`);
     return;
   }
   lastBackHandledAt = Date.now();
@@ -536,6 +560,7 @@ function onPopState(event) {
   // forward, а не pushState — внутри popstate Quest Browser его игнорирует.
   historyForwarding = true;
   historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
+  historyForwardExpectedRel = rel;
   try { history.forward(); } catch { /* история может быть недоступна */ }
   if (!hasParentDir(rel)) {
     logClient('INFO', 'B/back: root, stay');
@@ -828,6 +853,7 @@ async function init() {
   CLIENT_LOG_ENABLED = !!cfg.log;
   flushClientLogs();
   logClient('INFO', `browser: ${BROWSER_KIND}, ua=${navigator.userAgent || 'empty'}`);
+  if (BROWSER_KIND === 'oculus' && document.body) document.body.tabIndex = -1;
   state.controls = { ...DEFAULT_CONTROLS, ...(cfg.controls || {}) };
   state.langs = langs;
   const qrLink = $('#qrLink');
@@ -2696,10 +2722,9 @@ async function enterVR() {
       if (BROWSER_KIND === 'oculus') {
         oculusPostVrUntil = Date.now() + 15000;
         lastOculusB = false;
-        window.focus();
-        if (document.body && document.body.focus) document.body.focus();
         const activation = navigator.userActivation ? navigator.userActivation.isActive : 'n/a';
         logClient('INFO', `oculus: post-VR focus=${document.hasFocus()}, gamepads=${gamepadsInfo()}, activation=${activation}`);
+        restore2DFocus('vr end');
       }
       state.gallery.ray = null;
       state.gallery.hover = -1;
