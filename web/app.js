@@ -392,8 +392,9 @@ function onPopState(event) {
   }
   const rel = activeDirRel();
   if (!hasParentDir(rel)) {
-    // Мы уже на маркере документа; второй back завершает обычный возврат.
-    try { history.back(); } catch { /* история может быть недоступна */ }
+    // В корне не выходим со страницы: возвращаемся на свой маркер forward,
+    // он уже есть в истории после инициализации.
+    try { history.forward(); } catch { /* история может быть недоступна */ }
     return;
   }
   const parent = parentDirRel(rel);
