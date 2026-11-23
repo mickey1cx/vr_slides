@@ -44,15 +44,6 @@ window.addEventListener('unhandledrejection', (event) => {
   logClient('ERROR', 'Unhandled rejection', event.reason);
 });
 
-// Встроенный Browser на Quest и Wolvic по-разному отдают кнопку B в 2D.
-const BROWSER_KIND = (() => {
-  const ua = navigator.userAgent || '';
-  if (/OculusBrowser/i.test(ua)) return 'oculus';
-  if (/Wolvic|Volvic/i.test(ua)) return 'wolvic';
-  if (/Quest|Pico/i.test(ua)) return 'quest-other';
-  return 'other';
-})();
-
 const COLS = 4;
 const ROWS = 3;
 const SLOTS = COLS * ROWS;
@@ -382,7 +373,6 @@ function historyMarker(rel = activeDirRel()) {
 function syncHistoryMarker() {
   try {
     history.replaceState(historyMarker(), '');
-    historyMarkerSeen = true;
   } catch { /* история может быть недоступна */ }
 }
 
@@ -393,7 +383,6 @@ function syncHistoryMarker() {
 function initHistoryMarker() {
   try {
     history.pushState(historyMarker(), '');
-    historyMarkerSeen = true;
   } catch { /* история может быть недоступна */ }
 }
 
@@ -408,128 +397,12 @@ function armHistory() {
 function pushHistoryForDir(rel) {
   try {
     history.pushState(historyMarker(rel), '');
-    historyMarkerSeen = true;
   } catch { /* история может быть недоступна */ }
-}
-
-// Quest Browser после выхода из VR иногда меняет запись истории по первому B,
-// но не присылает popstate. history.state при этом обновляется — ловим это.
-const BACK_DEDUPE_MS = 800;
-let lastBackHandledAt = 0;
-let historyMarkerSeen = false;
-
-function currentHistoryRel() {
-  try {
-    const st = history.state;
-    if (st && typeof st === 'object' && st[HISTORY_MARKER] && st.root === state.rootId) {
-      return st.rel;
-    }
-  } catch { /* история может быть недоступна */ }
-  return undefined;
-}
-
-function checkSilentHistoryNav() {
-  if (!historyMarkerSeen || state.session) return;
-  if (historyForwarding || Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) return;
-  const rel = activeDirRel();
-  const hrel = currentHistoryRel();
-  if (hrel === undefined) {
-    // Back ушел на самую первую запись без маркера — возвращаемся обратно.
-    logClient('INFO', 'B/back: silent nav to unmarked, restore');
-    lastBackHandledAt = Date.now();
-    historyForwarding = true;
-    historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
-    historyForwardExpectedRel = rel;
-    try { history.forward(); } catch { /* история может быть недоступна */ }
-    syncHistoryMarker();
-    return;
-  }
-  if (hrel === rel) return;
-  logClient('INFO', `B/back: silent nav ${rel || '/'} -> ${hrel || '/'}`);
-  lastBackHandledAt = Date.now();
-  if (state.mode === 'gallery') state.gallery.rel = hrel;
-  else state.rel = hrel;
-  list().catch(showError);
-}
-
-// Oculus Browser после VR может проглотить первое нажатие B. Держим окно
-// диагностики и пробуем прочитать кнопку через Gamepad API, если она доступна.
-let oculusPostVrUntil = 0;
-let lastOculusB = false;
-
-function gamepadsInfo() {
-  try {
-    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
-    return pads.map((p) => `${p.mapping || '?'}:${p.buttons.length}`).join(',') || 'none';
-  } catch { return 'error'; }
-}
-
-function oculusGamepadBPressed() {
-  if (!navigator.getGamepads) return false;
-  try {
-    for (const pad of navigator.getGamepads()) {
-      if (!pad) continue;
-      const index = (pad.mapping === 'standard' || !pad.buttons[5]) ? 1 : 5;
-      if (pad.buttons[index] && pad.buttons[index].pressed) return true;
-    }
-  } catch { /* Gamepad API недоступна */ }
-  return false;
-}
-
-function handleBackOnce(source) {
-  if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) return;
-  lastBackHandledAt = Date.now();
-  const rel = activeDirRel();
-  if (!hasParentDir(rel)) {
-    logClient('INFO', `${source}: root, stay`);
-    return;
-  }
-  const parent = parentDirRel(rel);
-  logClient('INFO', `${source}: ${rel || '/'} -> ${parent || '/'}`);
-  goUpActiveDir().catch(showError);
-}
-
-function checkOculusPostVrInput() {
-  if (BROWSER_KIND !== 'oculus') return;
-  if (state.session || Date.now() > oculusPostVrUntil) {
-    lastOculusB = false;
-    return;
-  }
-  if (!document.hasFocus()) {
-    try { window.focus(); } catch { /* фокус может быть недоступен */ }
-  }
-  const pressed = oculusGamepadBPressed();
-  if (pressed && !lastOculusB) {
-    logClient('INFO', 'oculus: B detected via gamepad');
-    handleBackOnce('oculus gamepad B');
-  }
-  lastOculusB = pressed;
-}
-
-// После VR Oculus Browser оставляет документ без фокуса: первое B уходит в
-// оболочку и лишь возвращает фокус. Повторяем focus до тех пор, пока страница
-// не станет активной, чтобы первое же нажатие дошло до popstate.
-function restore2DFocus(where, attempt = 0) {
-  if (BROWSER_KIND !== 'oculus') return;
-  let focused = false;
-  try {
-    window.focus();
-    const target = $('#vrBtn') || document.body;
-    if (target && target.focus) target.focus({ preventScroll: true });
-    focused = document.hasFocus();
-  } catch { /* фокус может быть недоступен */ }
-  if (focused || attempt === 0 || attempt % 20 === 0 || attempt >= 99) {
-    logClient('INFO', `oculus: focus retry ${where} ${attempt}, hasFocus=${focused}`);
-  }
-  if (!focused && attempt < 100) {
-    setTimeout(() => restore2DFocus(where, attempt + 1), 50);
-  }
 }
 
 const FORWARD_ECHO_MS = 5000;
 let historyForwarding = false;
 let historyForwardUntil = 0;
-let historyForwardExpectedRel = null;
 
 // WebXR приостанавливает JS вкладки: эхо от history.forward() может прийти
 // только после выхода из VR. Продлеваем окно ожидания на границах сессии —
@@ -541,32 +414,20 @@ function extendForwardEcho(where) {
 }
 
 function onPopState(event) {
-  const st = event && event.state && typeof event.state === 'object' ? event.state : null;
-  const eventRel = st && st[HISTORY_MARKER] ? st.rel : null;
-  if (historyForwarding && Date.now() < historyForwardUntil
-      && (historyForwardExpectedRel === null || eventRel === historyForwardExpectedRel)) {
+  if (historyForwarding && Date.now() < historyForwardUntil) {
     historyForwarding = false;
     historyForwardUntil = 0;
-    historyForwardExpectedRel = null;
     syncHistoryMarker();
     logClient('INFO', 'B/back: forward echo');
     return;
   }
   historyForwarding = false; // просроченный флаг от приостановленной вкладки
-  historyForwardExpectedRel = null;
-  if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) {
-    // тихий переход уже обработал это нажатие, popstate лишь дублирует его.
-    logClient('INFO', `B/back: duplicate consumed (rel=${eventRel ?? 'none'})`);
-    return;
-  }
-  lastBackHandledAt = Date.now();
   const rel = activeDirRel();
   logClient('INFO', `B/back: pop rel=${rel || '/'}`);
   // Возвращаемся на свою запись: так Back не выведет со страницы. Делаем это
   // forward, а не pushState — внутри popstate Quest Browser его игнорирует.
   historyForwarding = true;
   historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
-  historyForwardExpectedRel = rel;
   try { history.forward(); } catch { /* история может быть недоступна */ }
   if (!hasParentDir(rel)) {
     logClient('INFO', 'B/back: root, stay');
@@ -858,8 +719,7 @@ async function init() {
   state.config = cfg;
   CLIENT_LOG_ENABLED = !!cfg.log;
   flushClientLogs();
-  logClient('INFO', `browser: ${BROWSER_KIND}, ua=${navigator.userAgent || 'empty'}`);
-  if (BROWSER_KIND === 'oculus' && document.body) document.body.tabIndex = -1;
+  logClient('INFO', `browser: ${navigator.userAgent || 'empty'}`);
   state.controls = { ...DEFAULT_CONTROLS, ...(cfg.controls || {}) };
   state.langs = langs;
   const qrLink = $('#qrLink');
@@ -935,23 +795,10 @@ async function init() {
   window.addEventListener('pointerdown', armHistory, { capture: true });
   window.addEventListener('keydown', armHistory, { capture: true });
   window.addEventListener('popstate', onPopState);
-  window.addEventListener('pageshow', () => {
-    extendForwardEcho('pageshow');
-    if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: pageshow');
-  });
-  window.addEventListener('focus', () => {
-    if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: focus');
-  });
+  window.addEventListener('pageshow', () => extendForwardEcho('pageshow'));
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      extendForwardEcho('visible');
-      if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: visible');
-    }
+    if (!document.hidden) extendForwardEcho('visible');
   });
-  setInterval(() => {
-    checkSilentHistoryNav();
-    checkOculusPostVrInput();
-  }, 50);
 
   if (cfg.roots.length) {
     const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
@@ -2531,9 +2378,6 @@ function handleInput(pad, time) {
 }
 
 function onKey(e) {
-  if (BROWSER_KIND === 'oculus' && !state.session && Date.now() < oculusPostVrUntil) {
-    logClient('INFO', `oculus: key key=${e.key} code=${e.code}`);
-  }
   if (e.key === 'Escape' && state.session) {
     state.session.end();
     return;
@@ -2724,14 +2568,6 @@ async function enterVR() {
       state.session = null;
       clearGLState();
       state.mode = 'photo';
-      logClient('INFO', `VR end history=${currentHistoryRel() ?? 'none'}, app=${activeDirRel() || '/'}`);
-      if (BROWSER_KIND === 'oculus') {
-        oculusPostVrUntil = Date.now() + 15000;
-        lastOculusB = false;
-        const activation = navigator.userActivation ? navigator.userActivation.isActive : 'n/a';
-        logClient('INFO', `oculus: post-VR focus=${document.hasFocus()}, gamepads=${gamepadsInfo()}, activation=${activation}`);
-        restore2DFocus('vr end');
-      }
       state.gallery.ray = null;
       state.gallery.hover = -1;
       state.gallery.navHover = '';
