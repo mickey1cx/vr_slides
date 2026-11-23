@@ -376,34 +376,48 @@ function syncHistoryMarker() {
   } catch { /* история может быть недоступна */ }
 }
 
-// Один дополнительный маркер нужен, чтобы Back оставался внутри документа:
-// иначе браузер уйдет на предыдущую страницу до вызова popstate.
+// Дополнительный маркер нужен, чтобы Back оставался внутри документа: иначе
+// браузер уйдет на предыдущую страницу до вызова popstate. Quest Browser может
+// проигнорировать pushState без жеста пользователя, поэтому повторяем его
+// на первом же клике/клавише.
 function initHistoryMarker() {
   try {
     history.pushState(historyMarker(), '');
   } catch { /* история может быть недоступна */ }
 }
 
+let historyArmed = false;
+function armHistory() {
+  if (historyArmed) return;
+  historyArmed = true;
+  initHistoryMarker();
+  syncHistoryMarker();
+}
+
+function pushHistoryForDir(rel) {
+  try {
+    history.pushState(historyMarker(rel), '');
+  } catch { /* история может быть недоступна */ }
+}
+
+let historyForwarding = false;
 function onPopState(event) {
-  const rel = activeDirRel();
-  // Повторный popstate на том же маркере (например, Forward) ничего не меняет.
-  if (event.state && event.state[HISTORY_MARKER] && event.state.root === state.rootId &&
-      event.state.rel === rel) {
+  if (historyForwarding) {
+    historyForwarding = false;
     syncHistoryMarker();
     return;
   }
+  const rel = activeDirRel();
+  // Возвращаемся на свою запись: так Back не выведет со страницы. Делаем это
+  // forward, а не pushState — внутри popstate Quest Browser его игнорирует.
+  historyForwarding = true;
+  try { history.forward(); } catch { /* история может быть недоступна */ }
+  setTimeout(() => { historyForwarding = false; }, 100);
   if (!hasParentDir(rel)) {
-    // В корне тоже нельзя уходить со страницы: добавляем свой маркер,
-    // это отменяет переход браузера назад.
-    try { history.pushState(historyMarker(rel), ''); } catch { /* история недоступна */ }
     logClient('INFO', 'B/back: root, stay');
     return;
   }
   const parent = parentDirRel(rel);
-  // Синхронный pushState отменяет переход браузера назад.
-  try {
-    history.pushState(historyMarker(parent), '');
-  } catch { /* без History API B останется обычным "назад" */ }
   logClient('INFO', `B/back: ${rel || '/'} -> ${parent || '/'}`);
   goUpActiveDir().catch(showError);
 }
@@ -761,6 +775,8 @@ async function init() {
 
   $('#vrBtn').addEventListener('click', () => enterVR().catch(showError));
   window.addEventListener('keydown', (e) => onKey(e));
+  window.addEventListener('pointerdown', armHistory, { capture: true });
+  window.addEventListener('keydown', armHistory, { capture: true });
   window.addEventListener('popstate', onPopState);
 
   if (cfg.roots.length) {
@@ -826,6 +842,7 @@ function renderGrid() {
       label.textContent = entry.name;
       card.append(thumb, label);
       card.addEventListener('click', () => {
+        pushHistoryForDir(entry.path);
         state.rel = entry.path;
         list().catch(showError);
       });
@@ -1997,6 +2014,7 @@ async function openGallerySelection(index = state.gallery.cursor) {
     if (target) await openImage(target);
     return;
   }
+  pushHistoryForDir(g.rel);
   const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(g.rel)}`);
   clearSelection(); // перешли в другой каталог — пометки сбрасываются
   g.entries = buildGalleryEntries(data.entries, g.rel);
