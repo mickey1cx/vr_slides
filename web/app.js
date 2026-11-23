@@ -44,6 +44,15 @@ window.addEventListener('unhandledrejection', (event) => {
   logClient('ERROR', 'Unhandled rejection', event.reason);
 });
 
+// Встроенный Browser на Quest и Wolvic по-разному отдают кнопку B в 2D.
+const BROWSER_KIND = (() => {
+  const ua = navigator.userAgent || '';
+  if (/OculusBrowser/i.test(ua)) return 'oculus';
+  if (/Wolvic|Volvic/i.test(ua)) return 'wolvic';
+  if (/Quest|Pico/i.test(ua)) return 'quest-other';
+  return 'other';
+})();
+
 const COLS = 4;
 const ROWS = 3;
 const SLOTS = COLS * ROWS;
@@ -442,6 +451,57 @@ function checkSilentHistoryNav() {
   list().catch(showError);
 }
 
+// Oculus Browser после VR может проглотить первое нажатие B. Держим окно
+// диагностики и пробуем прочитать кнопку через Gamepad API, если она доступна.
+let oculusPostVrUntil = 0;
+let lastOculusB = false;
+
+function gamepadsInfo() {
+  try {
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+    return pads.map((p) => `${p.mapping || '?'}:${p.buttons.length}`).join(',') || 'none';
+  } catch { return 'error'; }
+}
+
+function oculusGamepadBPressed() {
+  if (!navigator.getGamepads) return false;
+  try {
+    for (const pad of navigator.getGamepads()) {
+      if (!pad) continue;
+      const index = (pad.mapping === 'standard' || !pad.buttons[5]) ? 1 : 5;
+      if (pad.buttons[index] && pad.buttons[index].pressed) return true;
+    }
+  } catch { /* Gamepad API недоступна */ }
+  return false;
+}
+
+function handleBackOnce(source) {
+  if (Date.now() - lastBackHandledAt < BACK_DEDUPE_MS) return;
+  lastBackHandledAt = Date.now();
+  const rel = activeDirRel();
+  if (!hasParentDir(rel)) {
+    logClient('INFO', `${source}: root, stay`);
+    return;
+  }
+  const parent = parentDirRel(rel);
+  logClient('INFO', `${source}: ${rel || '/'} -> ${parent || '/'}`);
+  goUpActiveDir().catch(showError);
+}
+
+function checkOculusPostVrInput() {
+  if (BROWSER_KIND !== 'oculus') return;
+  if (state.session || Date.now() > oculusPostVrUntil) {
+    lastOculusB = false;
+    return;
+  }
+  const pressed = oculusGamepadBPressed();
+  if (pressed && !lastOculusB) {
+    logClient('INFO', 'oculus: B detected via gamepad');
+    handleBackOnce('oculus gamepad B');
+  }
+  lastOculusB = pressed;
+}
+
 const FORWARD_ECHO_MS = 5000;
 let historyForwarding = false;
 let historyForwardUntil = 0;
@@ -767,6 +827,7 @@ async function init() {
   state.config = cfg;
   CLIENT_LOG_ENABLED = !!cfg.log;
   flushClientLogs();
+  logClient('INFO', `browser: ${BROWSER_KIND}, ua=${navigator.userAgent || 'empty'}`);
   state.controls = { ...DEFAULT_CONTROLS, ...(cfg.controls || {}) };
   state.langs = langs;
   const qrLink = $('#qrLink');
@@ -842,11 +903,23 @@ async function init() {
   window.addEventListener('pointerdown', armHistory, { capture: true });
   window.addEventListener('keydown', armHistory, { capture: true });
   window.addEventListener('popstate', onPopState);
-  window.addEventListener('pageshow', () => extendForwardEcho('pageshow'));
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) extendForwardEcho('visible');
+  window.addEventListener('pageshow', () => {
+    extendForwardEcho('pageshow');
+    if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: pageshow');
   });
-  setInterval(checkSilentHistoryNav, 50);
+  window.addEventListener('focus', () => {
+    if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: focus');
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      extendForwardEcho('visible');
+      if (BROWSER_KIND === 'oculus' && Date.now() < oculusPostVrUntil) logClient('INFO', 'oculus: visible');
+    }
+  });
+  setInterval(() => {
+    checkSilentHistoryNav();
+    checkOculusPostVrInput();
+  }, 50);
 
   if (cfg.roots.length) {
     const hasRoot = (id) => cfg.roots.some((r) => r.id === id);
@@ -2426,6 +2499,9 @@ function handleInput(pad, time) {
 }
 
 function onKey(e) {
+  if (BROWSER_KIND === 'oculus' && !state.session && Date.now() < oculusPostVrUntil) {
+    logClient('INFO', `oculus: key key=${e.key} code=${e.code}`);
+  }
   if (e.key === 'Escape' && state.session) {
     state.session.end();
     return;
@@ -2617,6 +2693,14 @@ async function enterVR() {
       clearGLState();
       state.mode = 'photo';
       logClient('INFO', `VR end history=${currentHistoryRel() ?? 'none'}, app=${activeDirRel() || '/'}`);
+      if (BROWSER_KIND === 'oculus') {
+        oculusPostVrUntil = Date.now() + 15000;
+        lastOculusB = false;
+        window.focus();
+        if (document.body && document.body.focus) document.body.focus();
+        const activation = navigator.userActivation ? navigator.userActivation.isActive : 'n/a';
+        logClient('INFO', `oculus: post-VR focus=${document.hasFocus()}, gamepads=${gamepadsInfo()}, activation=${activation}`);
+      }
       state.gallery.ray = null;
       state.gallery.hover = -1;
       state.gallery.navHover = '';
