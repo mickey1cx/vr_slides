@@ -385,20 +385,22 @@ function initHistoryMarker() {
 }
 
 function onPopState(event) {
-  // Возврат к нашему же маркеру (например, Forward) — просто обновляем его.
-  if (event.state && event.state[HISTORY_MARKER] && event.state.root === state.rootId) {
+  const rel = activeDirRel();
+  // Повторный popstate на том же маркере (например, Forward) ничего не меняет.
+  if (event.state && event.state[HISTORY_MARKER] && event.state.root === state.rootId &&
+      event.state.rel === rel) {
     syncHistoryMarker();
     return;
   }
-  const rel = activeDirRel();
   if (!hasParentDir(rel)) {
-    // В корне не выходим со страницы: возвращаемся на свой маркер forward,
-    // он уже есть в истории после инициализации.
-    try { history.forward(); } catch { /* история может быть недоступна */ }
+    // В корне тоже нельзя уходить со страницы: добавляем свой маркер,
+    // это отменяет переход браузера назад.
+    try { history.pushState(historyMarker(rel), ''); } catch { /* история недоступна */ }
+    logClient('INFO', 'B/back: root, stay');
     return;
   }
   const parent = parentDirRel(rel);
-  // Это должен быть синхронный pushState: он отменяет переход браузера назад.
+  // Синхронный pushState отменяет переход браузера назад.
   try {
     history.pushState(historyMarker(parent), '');
   } catch { /* без History API B останется обычным "назад" */ }
