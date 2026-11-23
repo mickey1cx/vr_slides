@@ -16,6 +16,7 @@ import socket
 import ssl
 import sys
 import threading
+import time
 from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -742,13 +743,25 @@ class Handler(BaseHTTPRequestHandler):
                     "lines": lines,
                 })
             if path == "/api/list":
+                started = time.perf_counter()
                 root = get_root(query.get("root", [""])[0])
-                return self._json(list_dir(root, query.get("path", [""])[0]))
+                rel = query.get("path", [""])[0]
+                data = list_dir(root, rel)
+                listed = time.perf_counter()
+                self._json(data)
+                log("INFO", "api/list: %d entries, scan=%.1f ms, total=%.1f ms, path=%s",
+                    len(data["entries"]), (listed - started) * 1000,
+                    (time.perf_counter() - started) * 1000, rel or "/")
+                return
             if path == "/api/thumb":
                 root = get_root(query.get("root", [""])[0])
                 target = resolve(root, query.get("path", [""])[0])
                 width = int(query.get("w", [CONFIG["thumb_width"]])[0])
+                started = time.perf_counter()
                 data, mime = thumbnail(target, width)
+                elapsed = (time.perf_counter() - started) * 1000
+                if elapsed > 100:
+                    log("INFO", "api/thumb slow: %s %.1f ms", target.name, elapsed)
                 return self._bytes(data, mime, cache=86400)
             if path == "/api/image":
                 root = get_root(query.get("root", [""])[0])

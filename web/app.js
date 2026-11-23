@@ -159,8 +159,10 @@ function drawEyeThumb(ctx, img, entry, dx, dy, dw, dh, known = null) {
 
 const THUMB_CANVAS_W = 320;
 const THUMB_CANVAS_H = 160;
+const THUMB_STATS = { count: 0, total: 0, max: 0 };
 
 async function drawCardThumb(canvas, entry, known = null) {
+  const started = performance.now();
   const img = await loadImage(thumbUrl(entry));
   // Размер задаем только при отрисовке: в каталоге на 300 фото остальные
   // плашки остаются 1×1 и не занимают память до появления в видимой области.
@@ -171,6 +173,15 @@ async function drawCardThumb(canvas, entry, known = null) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const layout = drawEyeThumb(ctx, img, entry, 0, 0, canvas.width, canvas.height, known);
   canvas.dataset.layout = layout.type;
+  const elapsed = performance.now() - started;
+  THUMB_STATS.count += 1;
+  THUMB_STATS.total += elapsed;
+  THUMB_STATS.max = Math.max(THUMB_STATS.max, elapsed);
+  if (THUMB_STATS.count % 20 === 0) {
+    logClient('INFO', `timing: thumbs drawn=${THUMB_STATS.count}, `
+      + `avg=${Math.round(THUMB_STATS.total / THUMB_STATS.count)}ms, `
+      + `max=${Math.round(THUMB_STATS.max)}ms`);
+  }
 }
 
 // Луч попадает в плашку только по ее центральной области: промежутки между
@@ -718,6 +729,7 @@ function effectiveLayout(entry, img) {
 }
 
 async function init() {
+  const bootStarted = performance.now();
   const [cfg, saved, langs] = await Promise.all([
     api('/api/config'),
     api('/api/state'),
@@ -745,6 +757,7 @@ async function init() {
   const has = (code) => langs.some((l) => l.code === code);
   const initialLang = has(saved.lang) ? saved.lang : (has(cfg.language) ? cfg.language : (langs[0]?.code || 'ru'));
   await setLanguage(initialLang, false);
+  logClient('INFO', `timing: init setup=${Math.round(performance.now() - bootStarted)}ms`);
 
   $('#url').textContent = location.origin;
   $('#questUrl').textContent = `https://${cfg.ip}:${cfg.port}`;
@@ -816,14 +829,19 @@ async function init() {
     applyViewFromRoot(state.rootId);
     initHistoryMarker();
     await list();
+    logClient('INFO', `timing: init total=${Math.round(performance.now() - bootStarted)}ms`);
   } else {
     showError(t('errNoRoots'));
   }
 }
 
 async function list(clearSelection = true) {
+  const started = performance.now();
   const data = await api(`/api/list?root=${enc(state.rootId)}&path=${enc(state.rel)}`);
+  const fetched = performance.now();
   applyListing(data, clearSelection);
+  logClient('INFO', `timing: list fetch=${Math.round(fetched - started)}ms, `
+    + `render=${Math.round(performance.now() - fetched)}ms, entries=${data.entries.length}`);
 }
 
 function clearCurrentImage() {
