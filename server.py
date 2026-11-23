@@ -311,6 +311,16 @@ IMAGE_META_CACHE: dict[str, dict] = {}
 IMAGE_META_CACHE_FILE = THUMB_DIR / "image_meta_cache.json"
 IMAGE_META_LOCK = threading.Lock()
 IMAGE_META_DIRTY = False
+IMAGE_META_STATS = {}
+
+
+def reset_image_meta_stats() -> None:
+    global IMAGE_META_STATS
+    IMAGE_META_STATS = {
+        "files": 0, "hits": 0, "total": 0.0, "stat": 0.0, "lookup": 0.0,
+        "open": 0.0, "info": 0.0, "exif": 0.0, "regex": 0.0,
+        "scan": 0.0, "store": 0.0, "slow": [],
+    }
 
 
 def load_image_meta_cache() -> None:
@@ -354,36 +364,59 @@ def save_image_meta_cache() -> None:
 def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
     """Возвращает (размеры, панорама). Кэш по пути, mtime и размеру файла."""
     global IMAGE_META_DIRTY
+    started = time.perf_counter()
+    stats = IMAGE_META_STATS
     try:
         stat = path.stat()
     except OSError:
+        if stats:
+            stats["stat"] += (time.perf_counter() - started) * 1000
         return None, False
+    stat_ms = (time.perf_counter() - started) * 1000
     key = f"{path}|{stat.st_mtime_ns}|{stat.st_size}"
+    lookup_started = time.perf_counter()
     with IMAGE_META_LOCK:
         cached = IMAGE_META_CACHE.get(key)
+    lookup_ms = (time.perf_counter() - lookup_started) * 1000
     if cached is not None:
         width, height = cached.get("w"), cached.get("h")
+        if stats:
+            stats["hits"] += 1
+            stats["stat"] += stat_ms
+            stats["lookup"] += lookup_ms
+            stats["total"] += (time.perf_counter() - started) * 1000
         dims = (width, height) if width and height else None
         return dims, bool(cached.get("pano"))
 
+    name_started = time.perf_counter()
     dims = None
     pano = bool(PANO_NAME.search(path.stem))
+    name_elapsed = time.perf_counter() - name_started
+    open_ms = info_ms = exif_ms = regex_ms = scan_ms = 0.0
     if Image is not None:
         # Pillow читает только заголовок и метаданные: это на порядок быстрее,
         # чем сканировать десятки КБ в каждом файле большого каталога.
         try:
             with Image.open(path) as im:
+                open_ms = (time.perf_counter() - name_started - name_elapsed) * 1000
                 dims = im.size
                 if not pano:
+                    info_started = time.perf_counter()
                     meta = str(im.info)
+                    info_ms = (time.perf_counter() - info_started) * 1000
+                    exif_started = time.perf_counter()
                     try:
                         meta += " " + str(im.getexif())
                     except Exception:
                         pass
+                    exif_ms = (time.perf_counter() - exif_started) * 1000
+                    regex_started = time.perf_counter()
                     pano = bool(PANO_MARKERS.search(meta))
+                    regex_ms = (time.perf_counter() - regex_started) * 1000
         except Exception:
             dims = None
     else:
+        scan_started = time.perf_counter()
         try:
             with path.open("rb") as fh:
                 head = fh.read(PANO_SCAN_BYTES)
@@ -395,11 +428,30 @@ def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
                     pano = bool(PANO_MARKERS.search(tail.decode("latin-1", "ignore")))
         except OSError:
             pass
+        scan_ms = (time.perf_counter() - scan_started) * 1000
 
     width, height = dims if dims else (None, None)
+    store_started = time.perf_counter()
     with IMAGE_META_LOCK:
         IMAGE_META_CACHE[key] = {"w": width, "h": height, "pano": pano}
         IMAGE_META_DIRTY = True
+    store_ms = (time.perf_counter() - store_started) * 1000
+
+    if stats:
+        total_ms = (time.perf_counter() - started) * 1000
+        stats["files"] += 1
+        stats["total"] += total_ms
+        stats["stat"] += stat_ms
+        stats["lookup"] += lookup_ms
+        stats["open"] += open_ms
+        stats["info"] += info_ms
+        stats["exif"] += exif_ms
+        stats["regex"] += regex_ms
+        stats["scan"] += scan_ms
+        stats["store"] += store_ms
+        if total_ms > 200:
+            stats["slow"].append((path.name, round(total_ms), round(open_ms), round(exif_ms)))
+            stats["slow"] = sorted(stats["slow"], key=lambda x: -x[1])[:8]
     return dims, pano
 
 
@@ -408,8 +460,12 @@ def list_dir(root: dict, rel: str) -> dict:
     if not target.is_dir():
         raise ValueError("Это не каталог")
     base = root_base(root)
+    reset_image_meta_stats()
+    iter_started = time.perf_counter()
+    paths = list(target.iterdir())
+    iter_ms = (time.perf_counter() - iter_started) * 1000
     entries = []
-    for p in target.iterdir():
+    for p in paths:
         if p.name.startswith("."):
             continue
         rel_path = p.relative_to(base).as_posix()
@@ -429,7 +485,16 @@ def list_dir(root: dict, rel: str) -> dict:
                 item["pano"] = True
             entries.append(item)
     entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
+    save_started = time.perf_counter()
     save_image_meta_cache()
+    save_ms = (time.perf_counter() - save_started) * 1000
+    s = IMAGE_META_STATS
+    log("INFO", "list breakdown: iterdir=%.1f ms, image_meta=%.1f ms "
+        "(stat=%.1f, lookup=%.1f, open=%.1f, info=%.1f, exif=%.1f, regex=%.1f, "
+        "scan=%.1f, store=%.1f, hits=%d/%d), save_cache=%.1f ms, slow=%s",
+        iter_ms, s["total"], s["stat"], s["lookup"], s["open"], s["info"],
+        s["exif"], s["regex"], s["scan"], s["store"], s["hits"], s["files"],
+        save_ms, s["slow"] or "-")
     return {"root": root["id"], "path": rel, "entries": entries}
 
 
