@@ -64,7 +64,7 @@ if sys.platform == "win32":
 CONFIG: dict = {}
 STATE: dict = {
     "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
-    "panoMode": {}, "lang": None, "root": None,
+    "panoMode": {}, "lang": None, "root": None, "primaryHand": "right",
 }
 STATE_LOCK = threading.Lock()
 STATE_PATH: Path = BASE_DIR / "state.json"
@@ -716,6 +716,9 @@ def load_state() -> None:
                                 result[root_id] = mode
                     return result
 
+                def clean_primary_hand(raw):
+                    return "left" if raw == "left" else "right"
+
                 STATE = {
                     "zoom": clean_values(data.get("zoom"), 0.6, 2.5, 3),
                     "curve": clean_values(data.get("curve"), 0.0, 1.0, 2),
@@ -725,13 +728,14 @@ def load_state() -> None:
                     "panoMode": clean_pano_modes(data.get("panoMode")),
                     "lang": data.get("lang") if isinstance(data.get("lang"), str) else None,
                     "root": saved_root if isinstance(saved_root, str) and saved_root in root_ids else None,
+                    "primaryHand": clean_primary_hand(data.get("primaryHand")),
                 }
             return
         except (OSError, ValueError):
             pass
     STATE = {
         "zoom": {}, "curve": {}, "view": {}, "layout": {}, "layoutDefault": {},
-        "panoMode": {}, "lang": None, "root": None,
+        "panoMode": {}, "lang": None, "root": None, "primaryHand": "right",
     }
 
 
@@ -967,6 +971,11 @@ class Handler(BaseHTTPRequestHandler):
                         if layouts.get(rel) != item:
                             layouts[rel] = item
                             changed = True
+                if "primaryHand" in payload:
+                    hand = "left" if payload["primaryHand"] == "left" else "right"
+                    if STATE.get("primaryHand") != hand:
+                        STATE["primaryHand"] = hand
+                        changed = True
                 if "lang" in payload:
                     lang = str(payload["lang"])
                     if not valid_language(lang):

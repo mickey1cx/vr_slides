@@ -216,6 +216,9 @@ const state = {
   entries: [],
   images: [],
   current: -1,
+  primaryHand: 'right', // right | left — основной контроллер
+  primarySource: null,  // активный XRInputSource в текущей сессии
+  noPrimaryLogged: false,
   session: null,
   refSpace: null,
   gl: null,
@@ -339,10 +342,20 @@ async function setLanguage(code, persist = true) {
   if (persist) await saveState({ lang: code });
 }
 
+// Физические кнопки пометки/возврата зависят от выбранной руки:
+// на правом контроллере это A/B, на левом — X/Y.
+function hintVars() {
+  const left = state.primaryHand === 'left';
+  return {
+    markKey: t(left ? 'keyMarkLeft' : 'keyMarkRight'),
+    backKey: t(left ? 'keyBackLeft' : 'keyBackRight'),
+  };
+}
+
 function applyTexts() {
   document.title = t('title');
   document.querySelectorAll('[data-i18n]').forEach((el) => {
-    el.textContent = t(el.dataset.i18n);
+    el.textContent = t(el.dataset.i18n, hintVars());
   });
   document.querySelectorAll('[data-i18n-title]').forEach((el) => {
     el.title = t(el.dataset.i18nTitle);
@@ -351,6 +364,19 @@ function applyTexts() {
   if (preview && !preview.querySelector('img')) preview.textContent = t('chooseImage');
   if (state.current >= 0) updateInfo(state.entries[state.current]);
   updateSelectionUI();
+}
+
+function setPrimaryHand(hand, persist = true) {
+  state.primaryHand = hand === 'left' ? 'left' : 'right';
+  const select = $('#primaryHandSelect');
+  if (select) select.value = state.primaryHand;
+  const hint2d = document.querySelector('[data-i18n="vrHint2D"]');
+  if (hint2d && state.dict.vrHint2D) hint2d.textContent = t('vrHint2D', hintVars());
+  if (state.gl) {
+    if (state.current >= 0) updateLabel(state.entries[state.current]);
+    updateGalleryHeader();
+  }
+  if (persist) saveState({ primaryHand: state.primaryHand });
 }
 
 function showError(err) {
@@ -749,6 +775,7 @@ async function init() {
   state.layoutByRoot = saved.layout || {};
   state.layoutDefaultByRoot = saved.layoutDefault || {};
   state.panoModeByRoot = saved.panoMode || {};
+  setPrimaryHand(saved.primaryHand, false);
 
   const langSelect = $('#langSelect');
   for (const lang of langs) langSelect.add(new Option(lang.name, lang.code));
@@ -798,6 +825,7 @@ async function init() {
       .then(() => refreshDebugLog().catch(showError));
   });
 
+  $('#primaryHandSelect').addEventListener('change', (e) => setPrimaryHand(e.target.value));
   $('#layoutDirSelect').addEventListener('change', () => saveLayoutDefault().catch(showError));
   $('#layoutSelect').addEventListener('change', () => saveLayoutOverride().catch(showError));
   $('#panoModeSelect').addEventListener('change', () => savePanoMode().catch(showError));
@@ -1726,6 +1754,7 @@ function updateLabel(entry) {
   ctx.stroke();
 
   const vars = {
+    ...hintVars(),
     zoom: state.zoom.toFixed(1),
     curve: Math.round(state.curve * 100),
     panX: signedPercent(state.view.panX),
@@ -1744,7 +1773,7 @@ function updateLabel(entry) {
     const right = width / 2 + 20;
     drawHintRow(ctx, left, 106, 'vrHintPhoto', t('vrHintNavKeys'));
     drawHintRow(ctx, left, 142, 'vrHintZoom', `${t('vrHintZoomKeys')} ${vars.zoom}×`);
-    drawHintRow(ctx, left, 178, 'vrHintMark', t('vrHintMarkKeys'));
+    drawHintRow(ctx, left, 178, 'vrHintMark', vars.markKey);
     drawHintRow(ctx, right, 106, 'vrHintPan', `${t('vrHintPanKeys')} ${vars.panX}/${vars.panY}`);
     if (state.photoLayout?.type === 'pano') {
       drawHintRow(ctx, right, 142, 'vrHintLook', t('vrHintLookKeys'));
@@ -1753,7 +1782,7 @@ function updateLabel(entry) {
       drawHintRow(ctx, right, 142, 'vrHintShift', `${t('vrHintShiftKeys')} ${vars.shift}%`);
       drawHintRow(ctx, right, 178, 'vrHintCurve', `${t('vrHintCurveKeys')} ${vars.curve}%`);
     }
-    drawHintRow(ctx, left, 222, 'vrHintGallery', t('vrHintGalleryKeys'));
+    drawHintRow(ctx, left, 222, 'vrHintGallery', `${t('vrStick')}/${vars.backKey}`);
     drawHintRow(ctx, right, 214, 'vrHintPanel', t('vrHintPanelKeys'));
   }
   uploadImage(state.gl, state.texLabel, canvas);
@@ -2045,6 +2074,7 @@ function updateGalleryHeader() {
   ctx.fillStyle = '#9aa3b5';
   ctx.font = '26px sans-serif';
   ctx.fillText(t('galleryHint', {
+    ...hintVars(),
     index: g.entries.length ? g.cursor + 1 : 0,
     total: g.entries.length,
   }), 16, 96);
@@ -2186,7 +2216,7 @@ function scale(x, y, z) {
 }
 
 // ---------------------------------------------------------------------------
-// Луч правого контроллера (только для галереи)
+// Луч основного контроллера (только для галереи)
 // ---------------------------------------------------------------------------
 
 function cross(a, b) {
@@ -2285,11 +2315,34 @@ function computeRay(frame, refSpace, source) {
 // Ввод
 // ---------------------------------------------------------------------------
 
-function rightInputSource(session) {
+function primaryInputSource(session) {
+  let found = null;
   for (const src of Array.from(session.inputSources || [])) {
-    if (src.handedness === 'right') return src;
+    if (src.handedness === state.primaryHand) {
+      found = src;
+      break;
+    }
   }
-  return null;
+  const previous = state.primarySource;
+  state.primarySource = found;
+  if (found !== previous) {
+    logClient('INFO', `VR input: primary hand=${state.primaryHand}, `
+      + `source=${found ? found.handedness : 'none'}`);
+  }
+  if (!found && !state.noPrimaryLogged) {
+    state.noPrimaryLogged = true;
+    logClient('INFO', `VR input: primary hand=${state.primaryHand} is not connected`);
+  }
+  if (found && state.noPrimaryLogged) state.noPrimaryLogged = false;
+  return found;
+}
+
+function isPrimaryInput(inputSource) {
+  if (!inputSource) return false;
+  const primary = state.primarySource;
+  if (!primary) return inputSource.handedness === state.primaryHand;
+  if (inputSource === primary) return true;
+  return !!(primary.targetRaySpace && inputSource.targetRaySpace === primary.targetRaySpace);
 }
 
 function handleInput(pad, time) {
@@ -2471,7 +2524,7 @@ function onFrame(time, frame) {
   if (!state.gl || !refSpace || state.session !== session) return;
   try {
     const pose = frame.getViewerPose(refSpace);
-    const source = rightInputSource(session);
+    const source = primaryInputSource(session);
     handleInput(source && source.gamepad, time);
 
     const ray = computeRay(frame, refSpace, source);
@@ -2549,6 +2602,8 @@ async function enterVR() {
   logClient('INFO', 'enterVR: requesting immersive-vr session');
   const session = await navigator.xr.requestSession('immersive-vr');
   state.session = session;
+  state.primarySource = null;
+  state.noPrimaryLogged = false;
   try {
     state.zoom = state.zoomByRoot[state.rootId] ?? 1.0;
     setCurve(state.curveByRoot[state.rootId] ?? 0, false);
@@ -2567,8 +2622,9 @@ async function enterVR() {
     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
     state.refSpace = await session.requestReferenceSpace('local');
 
-    session.addEventListener('select', () => {
-      // Триггер в режиме фото больше не листает — пометки ставит кнопка A.
+    session.addEventListener('select', (event) => {
+      if (!isPrimaryInput(event.inputSource)) return;
+      // Триггер в режиме фото больше не листает — пометки ставит кнопка A/X.
       if (state.mode !== 'gallery') return;
       const g = state.gallery;
       if (g.navHover === 'exit' && state.session) {
@@ -2588,7 +2644,8 @@ async function enterVR() {
       const target = g.hover >= 0 ? g.hover : g.cursor;
       openGallerySelection(target).catch(showError);
     });
-    session.addEventListener('squeeze', () => {
+    session.addEventListener('squeeze', (event) => {
+      if (!isPrimaryInput(event.inputSource)) return;
       if (state.mode === 'gallery') {
         state.gripConsumed = true; // этот grip возвращает из галереи, панель не трогаем
         toggleGallery();
@@ -2600,6 +2657,8 @@ async function enterVR() {
       extendForwardEcho('vr end');
       syncHistoryMarker();
       state.session = null;
+      state.primarySource = null;
+      state.noPrimaryLogged = false;
       clearGLState();
       state.mode = 'photo';
       state.gallery.ray = null;
@@ -2621,7 +2680,8 @@ async function enterVR() {
     if (state.current < 0) throw new Error(t('errNoImage'));
     await loadPhoto(state.entries[state.current]);
     state.lastPanoDebug = 0;
-    logClient('INFO', `enterVR: photo loaded, layout=${state.photoLayout?.type || '?'}, projection=${panoMode()}`);
+    logClient('INFO', `enterVR: primary hand=${state.primaryHand}, `
+      + `layout=${state.photoLayout?.type || '?'}, projection=${panoMode()}`);
     session.requestAnimationFrame(onFrame, state.refSpace);
   } catch (err) {
     // Любая ошибка входа не должна оставлять выставленный state.gl.
