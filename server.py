@@ -1016,6 +1016,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _error(self, code: int, message: str):
+        # Раньше в файле оставался только код ответа из log_message; теперь
+        # видно и причину, даже если клиент не успел отправить JS-ERROR.
+        if code >= 500 or "/api/" in (self.path or ""):
+            level = "ERROR" if code >= 500 else "WARN"
+            log(level, "error %d for %s: %s", code, self.path, str(message)[:500])
         data = message.encode("utf-8", errors="replace")
         self.send_response(code)
         self.send_header("Content-Type", "text/plain; charset=utf-8")

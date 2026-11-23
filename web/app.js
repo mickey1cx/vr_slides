@@ -2056,7 +2056,10 @@ async function loadGalleryPage() {
       const canvas = await makeCardCanvas(entry);
       if (gen !== g.gen || !state.gl) continue;
       uploadImage(state.gl, state.texCards[slot], canvas);
-    } catch { /* оставляем заглушку */ }
+    } catch (err) {
+      // Карточка остается заглушкой, но причина теперь видна в журнале.
+      logClient('ERROR', `gallery card failed: slot=${slot}, path=${entry.path}`, err);
+    }
   }
 }
 
@@ -2590,6 +2593,18 @@ function onFrame(time, frame) {
   }
 }
 
+// XR-события не проходят через общий try/catch кадра: ловим их отдельно,
+// иначе ошибка нажатия теряет контекст и видна только как global error.
+function guardXR(name, handler) {
+  return (event) => {
+    try {
+      handler(event);
+    } catch (err) {
+      logClient('ERROR', `VR ${name} failed`, err);
+    }
+  };
+}
+
 async function enterVR() {
   extendForwardEcho('vr enter');
   if (!navigator.xr) {
@@ -2622,7 +2637,7 @@ async function enterVR() {
     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
     state.refSpace = await session.requestReferenceSpace('local');
 
-    session.addEventListener('select', (event) => {
+    session.addEventListener('select', guardXR('select', (event) => {
       if (!isPrimaryInput(event.inputSource)) return;
       // Триггер в режиме фото больше не листает — пометки ставит кнопка A/X.
       if (state.mode !== 'gallery') return;
@@ -2643,15 +2658,15 @@ async function enterVR() {
       // что выбрано стиком. Луч поверх плашки открывает плашку под лучом.
       const target = g.hover >= 0 ? g.hover : g.cursor;
       openGallerySelection(target).catch(showError);
-    });
-    session.addEventListener('squeeze', (event) => {
+    }));
+    session.addEventListener('squeeze', guardXR('squeeze', (event) => {
       if (!isPrimaryInput(event.inputSource)) return;
       if (state.mode === 'gallery') {
         state.gripConsumed = true; // этот grip возвращает из галереи, панель не трогаем
         toggleGallery();
       }
       // В режиме фото grip — только модификатор изгиба в сочетании со стиком.
-    });
+    }));
     session.addEventListener('end', () => {
       logClient('INFO', 'VR session ended');
       extendForwardEcho('vr end');
