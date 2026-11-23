@@ -819,11 +819,20 @@ async function list(clearSelection = true) {
   applyListing(data, clearSelection);
 }
 
+function clearCurrentImage() {
+  state.current = -1;
+  state.photoLayoutEntry = '';
+  const preview = $('#preview');
+  if (preview) preview.textContent = t('chooseImage');
+  const info = $('#info');
+  if (info) info.textContent = t('chooseImage');
+}
+
 function applyListing(data, clearSelection = true) {
   if (clearSelection) state.selected.clear();
   state.entries = data.entries;
   state.images = data.entries.filter((e) => e.type === 'image');
-  state.current = -1;
+  clearCurrentImage();
   $('#vrBtn').disabled = true;
   $('#error').hidden = true;
 
