@@ -157,8 +157,15 @@ function drawEyeThumb(ctx, img, entry, dx, dy, dw, dh, known = null) {
   return layout;
 }
 
+const THUMB_CANVAS_W = 320;
+const THUMB_CANVAS_H = 160;
+
 async function drawCardThumb(canvas, entry, known = null) {
   const img = await loadImage(thumbUrl(entry));
+  // Размер задаем только при отрисовке: в каталоге на 300 фото остальные
+  // плашки остаются 1×1 и не занимают память до появления в видимой области.
+  canvas.width = THUMB_CANVAS_W;
+  canvas.height = THUMB_CANVAS_H;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#222838';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -879,8 +886,8 @@ function renderGrid() {
     } else {
       const thumb = document.createElement('canvas');
       thumb.className = 'thumb';
-      thumb.width = 640;
-      thumb.height = 320;
+      thumb.width = 1;
+      thumb.height = 1;
       thumb._entry = entry; // для ленивой отрисовки по появлению в сетке
       if (observer) observer.observe(thumb);
       else drawCardThumb(thumb, entry).catch(() => {});

@@ -10,7 +10,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - the web client (`web/`);
    - `/api/list` — recursive directory listing (nested subfolders are supported);
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
-   - `/api/thumb` — thumbnails (cached in `thumbs/`).
+   - `/api/thumb` — thumbnails (cached in `thumbs/`, together with file metadata for fast directory opening).
 2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
 3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. "Cylinder" mode uses a different principle instead of the same sphere: a fullscreen quad is drawn, each fragment reconstructs a ray from the projection matrix and camera rotation, longitude comes from the ray direction, and the wall height is spread over the eye's vertical field of view. The source is an equirectangular 360° image, so only its central band is stretched onto the wall: the polar rows are excluded, otherwise they still make it look like a sphere. The wall has a finite height and above/below it the view is empty by design — the picture is not repeated. Head rotation and translation do not make the picture swim.
 
@@ -102,6 +102,8 @@ The result is shown in the selected-image panel with a confidence score. Auto-de
 Priority: **image override → directory layout → `config.json` → auto-detection**. The directory setting is a safety net for folders where every photo uses the same format but the detector gets it wrong.
 
 The same rules apply to **thumbnails**: the 2D grid and the VR gallery show a single eye with correct cropping instead of the whole file (for a 360 panorama — the whole 2:1 frame). Thumbnails are redrawn when the directory or image layout changes, and the refined result from opening the full image is applied back to its thumbnail. Rendering is lazy — only thumbnails near the visible grid area are drawn.
+
+**Large directories.** On the first open, the server reads file headers once (dimensions and standard Google Photo Sphere metadata), then stores the result in `thumbs/image_meta_cache.json` keyed by path, modification time and file size. Reopening the same directory, even after a server restart, does not rescan the files. Thumbnails are cached in `thumbs/` too, and canvases outside the visible area stay 1×1 until they are drawn at 320×160.
 
 ### 2. Generate a certificate
 
@@ -278,7 +280,7 @@ web/style.css
 web/i18n/*.json    — translation files (one file per language)
 state.json         — saved zoom/curve/view per directory, directory and per-image layouts, 360 projection mode, language and source (do not commit)
 cert/              — certificates and connect.png with the QR (do not commit)
-thumbs/            — thumbnail cache (do not commit)
+thumbs/            — thumbnail and image metadata cache (do not commit)
 logs/              — server logs per run (do not commit)
 debug.bat          — run with --log and the in-page Logs panel
 LICENSE            — MIT license

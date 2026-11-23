@@ -286,16 +286,6 @@ def resolve(root: dict, rel: str) -> Path:
     return target
 
 
-def image_size(path: Path):
-    if Image is None:
-        return None
-    try:
-        with Image.open(path) as im:
-            return im.size
-    except Exception:
-        return None
-
-
 # Только стандартные метаданные Google Photo Sphere (XMP GPano). Узлы ComfyUI
 # не показатель: один и тот же результат можно получить разными нодами, поэтому
 # их игнорируем — файл определится по контенту. Aspect 2:1 сам по себе тоже не
@@ -309,33 +299,107 @@ PANO_NAME = re.compile(
     r"(?:^|[^a-z0-9])(pano|panorama|equirect|equirectangular|360)(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
-PANO_CACHE: dict[str, bool] = {}
+# Если Pillow недоступен, сканируем только края файла. XMP обычно лежит в начале
+# JPEG или в конце PNG; 64 КБ достаточно, а чтение 256 КБ у каждой картинки
+# заметно тормозит первое открытие большого каталога.
+PANO_SCAN_BYTES = 65536
+
+# Размеры и признак панорамы кэшируются вместе: одно открытие файла вместо двух,
+# и каталог из 300 фото открывается быстро даже после перезапуска сервера.
+IMAGE_META_CACHE: dict[str, dict] = {}
+IMAGE_META_CACHE_FILE = THUMB_DIR / "image_meta_cache.json"
+IMAGE_META_LOCK = threading.Lock()
+IMAGE_META_DIRTY = False
 
 
-def is_panorama(path: Path) -> bool:
-    """Подсказка клиенту: файл похож на 360-панораму. Кэш по mtime + размеру."""
+def load_image_meta_cache() -> None:
+    global IMAGE_META_CACHE
+    try:
+        data = json.loads(IMAGE_META_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        IMAGE_META_CACHE = {}
+        return
+    if not isinstance(data, dict):
+        IMAGE_META_CACHE = {}
+        return
+    cache = {}
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        width, height = value.get("w"), value.get("h")
+        cache[str(key)] = {
+            "w": width if isinstance(width, int) and width > 0 else None,
+            "h": height if isinstance(height, int) and height > 0 else None,
+            "pano": bool(value.get("pano")),
+        }
+    IMAGE_META_CACHE = cache
+
+
+def save_image_meta_cache() -> None:
+    global IMAGE_META_DIRTY
+    if not IMAGE_META_DIRTY:
+        return
+    with IMAGE_META_LOCK:
+        try:
+            THUMB_DIR.mkdir(exist_ok=True)
+            tmp = IMAGE_META_CACHE_FILE.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(IMAGE_META_CACHE, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(IMAGE_META_CACHE_FILE)
+            IMAGE_META_DIRTY = False
+        except OSError:
+            pass
+
+
+def image_meta(path: Path) -> tuple[tuple[int, int] | None, bool]:
+    """Возвращает (размеры, панорама). Кэш по пути, mtime и размеру файла."""
+    global IMAGE_META_DIRTY
     try:
         stat = path.stat()
     except OSError:
-        return False
+        return None, False
     key = f"{path}|{stat.st_mtime_ns}|{stat.st_size}"
-    if key in PANO_CACHE:
-        return PANO_CACHE[key]
-    result = bool(PANO_NAME.search(path.stem))
-    if not result:
+    with IMAGE_META_LOCK:
+        cached = IMAGE_META_CACHE.get(key)
+    if cached is not None:
+        width, height = cached.get("w"), cached.get("h")
+        dims = (width, height) if width and height else None
+        return dims, bool(cached.get("pano"))
+
+    dims = None
+    pano = bool(PANO_NAME.search(path.stem))
+    if Image is not None:
+        # Pillow читает только заголовок и метаданные: это на порядок быстрее,
+        # чем сканировать десятки КБ в каждом файле большого каталога.
+        try:
+            with Image.open(path) as im:
+                dims = im.size
+                if not pano:
+                    meta = str(im.info)
+                    try:
+                        meta += " " + str(im.getexif())
+                    except Exception:
+                        pass
+                    pano = bool(PANO_MARKERS.search(meta))
+        except Exception:
+            dims = None
+    else:
         try:
             with path.open("rb") as fh:
-                head = fh.read(262144)
-                result = bool(PANO_MARKERS.search(head.decode("latin-1", "ignore")))
+                head = fh.read(PANO_SCAN_BYTES)
+                pano = bool(PANO_MARKERS.search(head.decode("latin-1", "ignore")))
                 # XMP в PNG может лежать после IDAT — проверяем и хвост файла.
-                if not result and stat.st_size > 262144:
-                    fh.seek(-262144, 2)
-                    tail = fh.read(262144)
-                    result = bool(PANO_MARKERS.search(tail.decode("latin-1", "ignore")))
+                if not pano and stat.st_size > PANO_SCAN_BYTES:
+                    fh.seek(-PANO_SCAN_BYTES, 2)
+                    tail = fh.read(PANO_SCAN_BYTES)
+                    pano = bool(PANO_MARKERS.search(tail.decode("latin-1", "ignore")))
         except OSError:
             pass
-    PANO_CACHE[key] = result
-    return result
+
+    width, height = dims if dims else (None, None)
+    with IMAGE_META_LOCK:
+        IMAGE_META_CACHE[key] = {"w": width, "h": height, "pano": pano}
+        IMAGE_META_DIRTY = True
+    return dims, pano
 
 
 def list_dir(root: dict, rel: str) -> dict:
@@ -357,13 +421,14 @@ def list_dir(root: dict, rel: str) -> dict:
                 "path": rel_path,
                 "size": p.stat().st_size,
             }
-            dims = image_size(p)
+            dims, pano = image_meta(p)
             if dims:
                 item["width"], item["height"] = dims
-            if is_panorama(p):
+            if pano:
                 item["pano"] = True
             entries.append(item)
     entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
+    save_image_meta_cache()
     return {"root": root["id"], "path": rel, "entries": entries}
 
 
@@ -896,6 +961,7 @@ def main():
     global CONFIG
     CONFIG = load_config(Path(args.config))
     THUMB_DIR.mkdir(exist_ok=True)
+    load_image_meta_cache()
     load_state()
 
     for root in CONFIG["roots"]:
