@@ -271,6 +271,7 @@ Just translate the keys from `web/i18n/en.json` — the new language appears in 
 
 Saved settings (per-directory zoom, curvature and a `view` block with pan/stereo shift, the directory layout, per-image layout overrides, the 360 projection mode, language and last selected source) live in `state.json`, which is gitignored. The source is restored on the next page load; if it is no longer present in `config.json`, the first one is used.
 
+<!--
 ## Roadmap
 
 Not implemented yet.
@@ -292,6 +293,8 @@ Not implemented yet.
 - [ ] **Phone remote.** A companion page on the same LAN: photo list, selection, browsing, pan and slideshow control from a phone. Connect via a QR link to the headset session and share one command channel with the VR client.
 - [ ] **Slideshow.** Auto-advance with a configurable interval, cross-fade between photos, play/pause and shuffle. Controlled from VR and from the phone remote; interval and order are saved with the other per-directory settings.
 - [ ] **Executable build.** Minimal path: PyInstaller `--onedir` freezes only `server.py`, while `web/`, `config.json`, locales, certificates and examples stay outside next to the exe and can be edited without rebuilding. Path handling needs to look up external files relative to `sys.executable` instead of `__file__`, plus a build script and README instructions. PyInstaller picks up the optional packages (`Pillow`, `segno`, `send2trash`) automatically if they are installed on the build machine; `cryptography` is only needed by `tools/make_cert.py` — either a second small exe or a server flag for certificate generation. A full `--onefile` with bundled assets, or Nuitka, can come later if needed.
+
+-->
 
 ## Dependencies
 
