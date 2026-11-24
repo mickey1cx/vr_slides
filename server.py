@@ -1,4 +1,4 @@
-"""Локальный HTTP(S)-сервер для стерео-галереи Quest 3.
+"""Локальный HTTP(S)-сервер для WebXR-галереи фото.
 
 Без внешних зависимостей. Pillow опционален (миниатюры и даунскейл 4K).
 """
@@ -44,7 +44,7 @@ except ImportError:  # опционально: Windows использует ctyp
     _send2trash = None
 
 try:
-    import segno  # опционально: QR-код со ссылкой для Quest 3
+    import segno  # опционально: QR-код со ссылкой для VR-шлема
 except ImportError:
     segno = None
 
@@ -308,7 +308,7 @@ def local_ip() -> str:
 
 
 def connection_url(http: bool = False) -> str:
-    """Адрес, который нужно открыть в Quest Browser."""
+    """Адрес, который нужно открыть в браузере VR-шлема."""
     scheme = "http" if http else "https"
     host = CONFIG.get("ip") or local_ip()
     return f"{scheme}://{host}:{CONFIG['port']}"
@@ -1281,7 +1281,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="VR стерео-галерея для Quest 3")
+    parser = argparse.ArgumentParser(description="WebXR-галерея фото для VR-шлемов")
     parser.add_argument("--config", default=str(BASE_DIR / "config.json"))
     parser.add_argument("--http", action="store_true", help="без TLS (только localhost)")
     parser.add_argument("--no-qr", action="store_true", help="не создавать QR-код при запуске")
@@ -1315,7 +1315,7 @@ def main():
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
 
     url = connection_url(args.http)
-    log("INFO", "Откройте на Quest 3: %s", url)
+    log("INFO", "Откройте в браузере VR-шлема: %s", url)
     if CONFIG.get("qr", True) and not args.no_qr:
         qr_path = BASE_DIR / CONFIG["qrfile"]
         if make_qr_png(url, qr_path):
@@ -1323,7 +1323,7 @@ def main():
         else:
             log("WARN", "Для генерации QR установите: pip install segno")
     if args.http:
-        log("WARN", "--http: для Quest 3 нужен HTTPS, иначе WebXR не запустится.")
+        log("WARN", "--http: для WebXR нужен HTTPS, иначе сессия не запустится.")
     log("INFO", "Сервер запущен, Ctrl+C для остановки.")
     if ADB_CONFIG.get("enabled"):
         launch_url = url.rstrip("/") + ADB_CONFIG.get("launch_path", "/")

@@ -1,8 +1,8 @@
-# SBS Stereo Photo Viewer for Oculus Quest 3
+# WebXR Photo Gallery for VR Headsets
 
 [Русская версия / Russian version](README.md)
 
-A small server on your PC plus a page in the headset browser. No Steam Link, Virtual Desktop or SteamVR: Quest 3 renders stereo itself via **WebXR**.
+A small server on your PC plus a page in a VR headset browser. It works with any headset that has a browser with **WebXR** support; tested on Oculus Quest 3.
 
 ## How it works
 
@@ -11,7 +11,7 @@ A small server on your PC plus a page in the headset browser. No Steam Link, Vir
    - `/api/list` — recursive directory listing (nested subfolders are supported);
    - `/api/image` — the source image (downscaled to `max_texture_size` when Pillow is available);
    - `/api/thumb` — thumbnails (cached in `thumbs/`, together with file metadata for fast directory opening).
-2. Quest Browser opens `https://<PC-IP>:8443` and requests an `immersive-vr` session.
+2. Open `https://<PC-IP>:8443` in the headset browser and request an `immersive-vr` session.
 3. A file is loaded as **a single texture**; its layout decides which UV rectangle and which aspect ratio are used for each eye. WebXR supplies a separate view matrix for each eye with the correct IPD, so you get a proper stereo pair instead of a stretched side-by-side image. A 360 panorama is mapped onto a sphere and viewed **from the inside** — head orientation comes from WebXR. "Cylinder" mode uses a different principle instead of the same sphere: a fullscreen quad is drawn, each fragment reconstructs a ray from the projection matrix and camera rotation, longitude comes from the ray direction, and the wall height is spread over the eye's vertical field of view. The source is an equirectangular 360° image, so only its central band is stretched onto the wall: the polar rows are excluded, otherwise they still make it look like a sphere. The wall has a finite height and above/below it the view is empty by design — the picture is not repeated. Head rotation and translation do not make the picture swim.
 
 ## Quick start
@@ -42,9 +42,9 @@ Open `config.json`:
   "delete_to_trash": true,
   "roots": [
     {
-      "id": "sbs",
-      "name": "My SBS photos",
-      "path": "D:/Stereo",
+      "id": "photos",
+      "name": "My photos",
+      "path": "D:/Photos",
       "sbs": "auto",
       "pano_mode": "sphere",
       "pano_cyl_vfill": 1.0,
@@ -67,12 +67,12 @@ Open `config.json`:
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
 - You can add as many `roots` as you need, each with its own path and mode.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
-- `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, stereo layouts for directories and individual images, chosen language and last selected source).
+- `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, image layouts for directories and individual images, chosen language and last selected source).
 - `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
 - `controls` — thumbstick pan and stereo shift settings (see below).
 - `delete_to_trash` — `true` (default): deleted photos go to the trash. On **Windows** the system **Recycle Bin** is used via the built-in Shell API (no extra packages). On **Linux/macOS**, install `pip install send2trash` to enable trash; otherwise deletion is permanent. `false` — always delete immediately.
 
-#### Stereo layouts and auto-detection
+#### Image layouts and auto-detection
 
 | `sbs` value | What the file contains | Aspect of one eye |
 |---|---|---|
@@ -83,7 +83,7 @@ Open `config.json`:
 | `hou` | two stacked halves, each compressed vertically by 2 | `W/H` |
 | `pano` | 360° panorama, no stereo pair: the viewer is inside a sphere or in front of a closed flat wall | whole texture |
 
-Every stereo layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture: sphere mode uses a dedicated sphere mesh, while cylinder mode uses a fullscreen quad and reconstructs a world-space ray per fragment.
+Every image layout uses one texture: only the eye's UV rectangle and the plane aspect change. Anamorphic formats need no separate shader — the stretching is done by geometry. Panoramas use the whole texture: sphere mode uses a dedicated sphere mesh, while cylinder mode uses a fullscreen quad and reconstructs a world-space ray per fragment.
 
 With `sbs: "auto"` each image is classified using several signals:
 
@@ -93,7 +93,7 @@ With `sbs: "auto"` each image is classified using several signals:
 4. **half similarity** — the image is downscaled to 96×64 and the left/right or top/bottom halves are compared. Horizontal edges are compared instead of raw brightness, with a small horizontal shift search: this handles real disparity between the eyes and avoids false matches on repeating textures;
 5. **seamless 360 without metadata** — with no XMP and no filename hint, an aspect near 2:1 plus matching left/right edges and no half similarity means a panorama. Aspect 2:1 alone is not enough: full-SBS often has the same dimensions.
 
-The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Stereo layout** block has two dropdowns:
+The result is shown in the selected-image panel with a confidence score. Auto-detection can fail on symmetric scenes and on ordinary 16:9 photos, where `mono`, `half` and `hou` share the same aspect ratio. The **Image layout** block has two dropdowns:
 
 - **For directory** — auto-detect by default. Choosing a concrete layout applies it to **every image of the source** and saves it in `state.json` as `layoutDefault[rootId]`. Switching back to auto-detect removes the setting.
 - **For image** — a per-file override, plus a **Swap eyes** checkbox (disabled for 2D and 360). **From directory** removes the override.
@@ -142,15 +142,15 @@ Available flags: `--config path`, `--http` (no TLS, for `localhost` only — Web
 At startup the server prints the URL and the QR file path:
 
 ```text
-Откройте на Quest 3: https://192.168.1.50:8443
+Open in a VR headset browser: https://192.168.1.50:8443
 QR-код: cert/connect.png  (или https://192.168.1.50:8443/qr)
 ```
 
 The QR encodes the same address that is used for the certificate. If the IP changes, regenerate the certificate and restart the server — the QR is recreated automatically.
 
-> Quest 3 has no general built-in QR scanner: its system QR support is limited to Wi‑Fi setup. To open the link from a QR, install any third-party QR scanner app on Quest (App Lab/SideQuest), or just type the URL manually. After the first visit you can bookmark it in Quest Browser.
+> Oculus Quest 3 has no general built-in QR scanner: its system QR support is limited to Wi‑Fi setup. To open the link from a QR, install a third-party QR scanner app (App Lab/SideQuest) or just type the URL manually. After the first visit you can bookmark it in the headset browser.
 
-### Open the URL on Quest via ADB (optional)
+### Open the URL via ADB (optional)
 
 To make the server wake the headset and open the gallery at startup, create `adb.json` next to `config.json` using `adb.example.json` as a template. The minimum is the path to adb:
 
@@ -168,7 +168,7 @@ If the file is missing, empty, or `adb_path` is not set, the feature is disabled
 |---|---|
 | `adb_path` | `adb.exe` when adb is on PATH, or the full path to `adb.exe`. Relative paths are resolved from the project root. |
 | `device` | Serial number or `IP:port`. For `IP:port` the server runs `adb connect` itself if the device is not visible. Empty — first device from `adb devices`; if there is none, discover `_adb-tls-connect._tcp` with `adb mdns services` and connect to the first reachable device. |
-| `browser_package` | For example `com.oculus.browser`. Empty — default browser via `ACTION_VIEW`. |
+| `browser_package` | For example `com.oculus.browser` on Quest. Empty — default browser via `ACTION_VIEW`. |
 | `wake` | Send `KEYCODE_WAKEUP` before launching. Default `true`. |
 | `launch_path` | Path appended to the server URL. Default `/`. |
 | `kill_adb_after_launch` | Run `adb kill-server` after a successful launch so the ADB daemon does not stay in the process list. Default `false`. |
@@ -191,13 +191,15 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
 
 ![2D gallery with the contents of the example directory](docs/example-gallery.png)
 
-### 4. On Quest 3
+### 4. In a VR headset browser
 
-1. Open **Browser** and enter `https://<PC-IP>:8443` (or scan the generated QR with a third-party scanner).
+Tested on Oculus Quest 3 with Quest Browser. On other headsets, use any browser with WebXR support.
+
+1. Open the headset browser and enter `https://<PC-IP>:8443` (or scan the generated QR with a third-party scanner).
 2. At the certificate warning choose **Advanced → Proceed** (required: without accepting the certificate WebXR will not start).
 3. Pick a photo and press **Enter VR**.
 
-   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The panel starts with the image itself, with the **Enter VR** button right below it; the **Primary controller** selector follows right after it, and all other settings are below. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory. The **Stereo layout** block shows how the current file was recognized; **For directory** pins the layout for the whole folder, while **For image** and **Swap eyes** pin the layout or eye order for this particular image. The right controller's **B** button in the 2D Quest Browser view (and the **B** key on a PC) now goes up one directory instead of navigating the browser back, At the root of the collection, **B** no longer leaves the gallery either: the Back navigation is cancelled. In VR, **B** still returns to the photo. In Meta's built-in Oculus Browser, the 2D page may lose focus for a short time after leaving VR: the first **B** press then only restores focus and does not go up a directory. Restore page focus first (for example, point at any place in the UI and press the trigger), then press **B**. This behavior has not been observed in Wolvic.
+   On the 2D page, only the **file grid scrolls** — the top menu and the selected-image panel stay in place. The panel starts with the image itself, with the **Enter VR** button right below it; the **Primary controller** selector follows right after it, and all other settings are below. The **"⏮ To start" / "To end ⏭"** buttons in the header jump to the first/last card of the current directory, highlight it and open it. The selected-image panel has a **View settings** block with **pan ↔/↕**, **stereo shift** and a **Reset view** button, plus a **Screen curvature** slider (0% — flat, as before; 100% — a pronounced curve). All values are saved per directory. The **Image layout** block shows how the current file was recognized; **For directory** pins the layout for the whole folder, while **For image** and **Swap eyes** pin the layout or eye order for this particular image. The right controller's **B** button in the 2D headset-browser view (and the **B** key on a PC) now goes up one directory instead of navigating the browser back. At the root of the collection, **B** no longer leaves the gallery either: the Back navigation is cancelled. In VR, **B** still returns to the photo. After leaving VR, the headset browser may lose page focus for a short time: the first **B** press then only restores focus and does not go up a directory. Restore page focus first (for example, point at any place in the UI and press the trigger), then press **B**. This was tested in Oculus Browser on Quest 3; it has not been observed in Wolvic.
 
    **Marks and deletion.** Press the mark button on the primary controller (**A** for the right hand, **X** for the left; in VR), the **A/M** key, or the badge in the top-right corner of a thumbnail (in 2D; `+` to mark, `✓` to unmark) to toggle a mark. In VR photo mode a marked photo shows a yellow **✓** in the top-right corner and a yellow index in the hint under the photo. The **"Delete marked"** button in the header deletes marked photos after confirmation; in the VR gallery there is a **"Delete (N)"** plate — the first trigger press arms the confirmation, the second performs deletion (the confirmation expires after 5 seconds). Marks apply **only within the current directory**: moving to another folder or source clears them. Deletion goes to the trash by default (see `delete_to_trash`).
 
@@ -223,7 +225,7 @@ You can regenerate the pictures with `python tools/make_examples.py` (requires P
    - **"Exit VR" button** at the bottom of the gallery (point at it and press the trigger);
    - **Grip**, **thumbstick press** or **B/Y** — return to the photo.
 
-   **Primary controller.** The **Primary controller** selector in the photo panel chooses which hand drives the gallery: right by default or left. The choice is saved globally (independent of the directory) and survives page and server restarts. In VR exactly one controller is active: the thumbstick, trigger, grip, A/B buttons and the gallery ray work only with it; the other controller is fully passive and kept free for future functions. If the selected hand is not connected, control does not fall back to the other one. With the left hand, the physical mark and back buttons are **X** and **Y** (logical A and B), and the VR and 2D hints show the matching letters. The 2D Quest Browser B behavior is independent of this setting.
+   **Primary controller.** The **Primary controller** selector in the photo panel chooses which hand drives the gallery: right by default or left. The choice is saved globally (independent of the directory) and survives page and server restarts. In VR exactly one controller is active: the thumbstick, trigger, grip, A/B buttons and the gallery ray work only with it; the other controller is fully passive and kept free for future functions. If the selected hand is not connected, control does not fall back to the other one. With the left hand, the physical mark and back buttons are **X** and **Y** (logical A and B), and the VR and 2D hints show the matching letters. The 2D headset-browser B behavior is independent of this setting.
 
    On a PC you can test with the arrow keys (left/right — photos, up/down — zoom or gallery rows), `Shift` + arrows (pan), `Shift` + `[` / `]` (stereo shift), `[` / `]` (screen curvature), `Home` / `End` (first/last gallery item), `Enter` (open), `G` (switch mode), `A` / `M` (toggle mark), `Delete` (delete marked) and `Escape` (exit VR).
 
@@ -258,7 +260,7 @@ Each file is a flat key → string map. `__name` is the language name shown in t
 ```json
 {
   "__name": "Deutsch",
-  "title": "VR Stereo-Galerie · Quest 3",
+  "title": "VR Gallery · WebXR",
   "vrLabelHint": "Stick ← → blättern · ↑ ↓ Zoom {zoom}× · Stick/B — Galerie"
 }
 ```
@@ -278,7 +280,7 @@ Not implemented yet.
 
 ### Near term
 
-- [ ] **MR (mixed reality).** An `immersive-ar` session with Quest 3 color passthrough: place the photo panel and the 3D gallery in the real room and adjust the panel position and size with your hands. This needs a separate WebXR session mode, spatial anchoring and UI adaptation (the current bar is designed for VR).
+- [ ] **MR (mixed reality).** An `immersive-ar` session with color passthrough (for example, on Quest 3): place the photo panel and the 3D gallery in the real room and adjust the panel position and size with your hands. This needs a separate WebXR session mode, spatial anchoring and UI adaptation (the current bar is designed for VR).
 
 ### Mid term
 
@@ -330,10 +332,10 @@ docs/              — screenshots for the documentation
 
 - **"Enter VR" says WebXR is unavailable** — the page was opened over `http://<IP>` instead of HTTPS. You need `https://` with an accepted certificate.
 - **No files shown** — check `path` in `config.json` (on Windows use forward slashes, e.g. `D:/Stereo`) and the extensions: `.jpg .jpeg .png .webp` are supported.
-- **The image looks stretched** — the layout was detected incorrectly. Pick the right one in the **Stereo layout** block of the selected-image panel (`sbs` ↔ `half` ↔ `ou` ↔ `hou`), or set `sbs`/`eye_aspect` for the directory.
+- **The image looks stretched** — the layout was detected incorrectly. Pick the right one in the **Image layout** block of the selected-image panel (`sbs` ↔ `half` ↔ `ou` ↔ `hou`), or set `sbs`/`eye_aspect` for the directory.
 - **The eyes are swapped or the image looks "inside out"** — enable **Swap eyes** for this file or set `swap: true` for the whole directory.
 - **Auto-detection is wrong** — expected for symmetric scenes and ordinary 16:9 photos: pin the layout via **For image**, or via **For directory** if the whole folder uses the same format. Either choice is saved in `state.json`.
-- **The texture does not load on Quest 3** — reduce `max_texture_size` to 2048.
+- **The texture does not load in the headset** — reduce `max_texture_size` to 2048.
 - **Network is slow** — connect the PC with a cable, use 5 GHz for the headset, and enable Pillow for thumbnails.
 
 ## Security

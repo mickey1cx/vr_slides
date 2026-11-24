@@ -387,7 +387,7 @@ function showError(err) {
   box.hidden = false;
 }
 
-// Кнопка B правого контроллера в 2D-режиме Quest Browser работает как назад.
+// Кнопка B правого контроллера в 2D-режиме браузера шлема работает как назад.
 // Держим один маркер в истории: когда B вызывает popstate и мы не в корне
 // коллекции, отменяем уход со страницы и поднимаемся на каталог выше.
 const HISTORY_MARKER = 'vrslidesDir';
@@ -421,8 +421,8 @@ function syncHistoryMarker() {
 }
 
 // Дополнительный маркер нужен, чтобы Back оставался внутри документа: иначе
-// браузер уйдет на предыдущую страницу до вызова popstate. Quest Browser может
-// проигнорировать pushState без жеста пользователя, поэтому повторяем его
+// браузер уйдет на предыдущую страницу до вызова popstate. Некоторые браузеры
+// могут проигнорировать pushState без жеста пользователя, поэтому повторяем его
 // на первом же клике/клавише.
 function initHistoryMarker() {
   try {
@@ -469,7 +469,7 @@ function onPopState(event) {
   const rel = activeDirRel();
   logClient('INFO', `B/back: pop rel=${rel || '/'}`);
   // Возвращаемся на свою запись: так Back не выведет со страницы. Делаем это
-  // forward, а не pushState — внутри popstate Quest Browser его игнорирует.
+  // forward, а не pushState — внутри popstate некоторые браузеры его игнорируют.
   historyForwarding = true;
   historyForwardUntil = Date.now() + FORWARD_ECHO_MS;
   try { history.forward(); } catch { /* история может быть недоступна */ }

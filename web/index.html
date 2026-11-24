@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>VR Стерео-галерея · Quest 3</title>
+  <title>WebXR-галерея фото</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header>
-    <h1><span data-i18n="heading">VR Стерео-галерея</span> <small data-i18n="headingSmall">Quest 3 · SBS</small></h1>
+    <h1><span data-i18n="heading">WebXR-галерея фото</span></h1>
     <div class="bar">
       <label><span data-i18n="languageLabel">Язык</span> <select id="langSelect"></select></label>
       <label><span data-i18n="rootLabel">Каталог</span> <select id="rootSelect"></select></label>
@@ -42,7 +42,7 @@
         </select>
       </label>
       <fieldset class="view-settings">
-        <legend data-i18n="layoutSettings">Формат стереопары</legend>
+        <legend data-i18n="layoutSettings">Формат изображения</legend>
         <label class="setting">
           <span data-i18n="layoutDirLabel">Для каталога</span>
           <select id="layoutDirSelect">
@@ -106,8 +106,8 @@
         <output id="curveValue">0%</output>
       </label>
       <div class="hint">
-        <b data-i18n="questHintPrefix">На Quest 3 откройте</b> <span id="questUrl" class="mono"></span>
-        <span data-i18n="questHintSuffix">в браузере и примите предупреждение о сертификате.</span><br>
+        <b data-i18n="questHintPrefix">В браузере шлема откройте</b> <span id="questUrl" class="mono"></span>
+        <span data-i18n="questHintSuffix">и примите предупреждение о сертификате.</span><br>
         <b data-i18n="vrHintPrefix">В VR:</b> <span data-i18n="vrHint2D">триггер — следующее фото, grip — предыдущее, grip + стик ↑↓ — изгиб экрана.</span><br>
         <span data-i18n="galleryNavHint"></span>
       </div>
