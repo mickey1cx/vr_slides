@@ -170,6 +170,60 @@ def normalise_pano_mode(value) -> str | None:
     return None
 
 
+ROOT_SETTING_KEYS = (
+    "sbs",
+    "pano_mode",
+    "pano_cyl_vfill",
+    "pano_cyl_vcrop",
+    "swap",
+    "eye_aspect",
+    "distance",
+    "height",
+)
+
+
+def default_root_settings() -> dict:
+    """Значения для старых конфигов без блока root_defaults."""
+    return {
+        "sbs": "sbs",
+        "pano_mode": "sphere",
+        "pano_cyl_vfill": 1.0,
+        "pano_cyl_vcrop": 0.5,
+        "swap": False,
+        "eye_aspect": None,
+        "distance": 2.0,
+        "height": 1.2,
+    }
+
+
+def normalise_eye_aspect(value):
+    try:
+        return round(max(0.1, min(10.0, float(value))), 4) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def normalise_root_settings(values: dict, defaults: dict) -> dict:
+    """Сливает настройки каталога с общими значениями и проверяет их."""
+    result = dict(defaults)
+    if isinstance(values, dict):
+        for key in ROOT_SETTING_KEYS:
+            if key in values:
+                result[key] = values[key]
+    result["sbs"] = normalise_layout(result.get("sbs")) or "sbs"
+    result["pano_mode"] = normalise_pano_mode(result.get("pano_mode")) or "sphere"
+    # Какая доля вертикального угла обзора занята стеной. 1.0 — до краев глаза.
+    result["pano_cyl_vfill"] = as_num(result.get("pano_cyl_vfill"), 1.0, 0.5, 1.0)
+    # Из эквайреугольного источника берем центральную полосу: полюса в
+    # верхней/нижней строке иначе выглядят как сфера. 1.0 — весь кадр.
+    result["pano_cyl_vcrop"] = as_num(result.get("pano_cyl_vcrop"), 0.5, 0.2, 1.0)
+    result["swap"] = as_bool(result.get("swap"), False)
+    result["eye_aspect"] = normalise_eye_aspect(result.get("eye_aspect"))
+    result["distance"] = as_num(result.get("distance"), 2.0, 0.2, 20.0)
+    result["height"] = as_num(result.get("height"), 1.2, 0.2, 10.0)
+    return result
+
+
 def valid_rel(value) -> bool:
     """Проверка относительного пути картинки для карты ручных переопределений."""
     if not isinstance(value, str) or not value or len(value) > 512:
@@ -206,20 +260,19 @@ def load_config(path: Path) -> dict:
     controls["shiftStep"] = as_num(controls.get("shiftStep"), 0.005, 0.0005, 0.05)
     controls["panBase"] = as_num(controls.get("panBase"), 0.35, 0.0, 2.0)
     controls["panGain"] = as_num(controls.get("panGain"), 1.0, 0.0, 4.0)
+    shared = cfg.get("root_defaults")
+    if not isinstance(shared, dict):
+        shared = {}
+    defaults = normalise_root_settings(shared, default_root_settings())
+    cfg["root_defaults"] = defaults
+    roots = []
     for root in cfg["roots"]:
-        root["sbs"] = normalise_layout(root.get("sbs")) or "sbs"
-        root["pano_mode"] = normalise_pano_mode(root.get("pano_mode")) or "sphere"
-        # Какая доля вертикального угла обзора занята стеной. 1.0 — до краев глаза.
-        root["pano_cyl_vfill"] = as_num(root.get("pano_cyl_vfill"), 1.0, 0.5, 1.0)
-        # Из эквайреугольного источника берем центральную полосу: полюса в
-        # верхней/нижней строке иначе выглядят как сфера. 1.0 — весь кадр.
-        root["pano_cyl_vcrop"] = as_num(root.get("pano_cyl_vcrop"), 0.5, 0.2, 1.0)
-        root["swap"] = as_bool(root.get("swap"), False)
-        aspect = root.get("eye_aspect")
-        try:
-            root["eye_aspect"] = round(max(0.1, min(10.0, float(aspect))), 4) if aspect else None
-        except (TypeError, ValueError):
-            root["eye_aspect"] = None
+        if not isinstance(root, dict):
+            continue
+        merged = dict(root)
+        merged.update(normalise_root_settings(root, defaults))
+        roots.append(merged)
+    cfg["roots"] = roots
     return cfg
 
 
@@ -847,13 +900,13 @@ def config_payload() -> dict:
                 "id": r["id"],
                 "name": r["name"],
                 "sbs": r["sbs"],   # mono | sbs | half | ou | hou | pano | auto
-                "pano_mode": r.get("pano_mode", "sphere"),  # sphere | cylinder
-                "panoCylVfill": r.get("pano_cyl_vfill", 1.0),  # доля высоты кадра
-                "panoCylVcrop": r.get("pano_cyl_vcrop", 0.5),  # доля высоты источника
+                "pano_mode": r["pano_mode"],  # sphere | cylinder
+                "panoCylVfill": r["pano_cyl_vfill"],  # доля высоты кадра
+                "panoCylVcrop": r["pano_cyl_vcrop"],  # доля высоты источника
                 "swap": r["swap"],
-                "eyeAspect": r.get("eye_aspect"),
-                "distance": r.get("distance", 2.0),
-                "height": r.get("height", 1.2),
+                "eyeAspect": r["eye_aspect"],
+                "distance": r["distance"],
+                "height": r["height"],
             }
             for r in CONFIG["roots"]
         ],

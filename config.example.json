@@ -1,0 +1,47 @@
+{
+  "host": "0.0.0.0",
+  "port": 8443,
+  "ip": null,
+  "certfile": "cert/cert.pem",
+  "keyfile": "cert/key.pem",
+  "thumb_width": 320,
+  "max_texture_size": 4096,
+  "language": "ru",
+  "statefile": "state.json",
+  "qr": true,
+  "qrfile": "cert/connect.png",
+  "controls": {
+    "panInvertX": true,
+    "panInvertY": true,
+    "shiftInvert": false,
+    "panStep": 0.08,
+    "shiftStep": 0.005,
+    "panBase": 0.35,
+    "panGain": 1.0
+  },
+  "delete_to_trash": true,
+  "root_defaults": {
+    "sbs": "auto",
+    "pano_mode": "sphere",
+    "pano_cyl_vfill": 1.0,
+    "pano_cyl_vcrop": 1.0,
+    "swap": false,
+    "eye_aspect": null,
+    "distance": 2.0,
+    "height": 1.2
+  },
+  "roots": [
+    {
+      "id": "demo",
+      "name": "Тестовый пример",
+      "path": "example"
+    },
+    {
+      "id": "photos",
+      "name": "Фото со своими настройками",
+      "path": "D:/Photos",
+      "sbs": "half",
+      "distance": 2.5
+    }
+  ]
+}

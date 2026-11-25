@@ -20,32 +20,26 @@
     "panGain": 1.0
   },
   "delete_to_trash": true,
+  "root_defaults": {
+    "sbs": "auto",
+    "pano_mode": "sphere",
+    "pano_cyl_vfill": 1.0,
+    "pano_cyl_vcrop": 1.0,
+    "swap": false,
+    "eye_aspect": null,
+    "distance": 2.0,
+    "height": 1.2
+  },
   "roots": [
     {
       "id": "demo",
       "name": "Тестовый пример",
-      "path": "example",
-      "sbs": "auto",
-      "pano_mode": "sphere",
-      "pano_cyl_vfill": 1.0,
-      "pano_cyl_vcrop": 1.0,
-      "swap": false,
-      "eye_aspect": null,
-      "distance": 2.0,
-      "height": 1.2
+      "path": "example"
     },
     {
       "id": "sbs",
       "name": "Мои SBS-фото",
-      "path": "S:/HSMB_Pics",
-      "sbs": "auto",
-      "pano_mode": "sphere",
-      "pano_cyl_vfill": 1.0,
-      "pano_cyl_vcrop": 1.0,
-      "swap": false,
-      "eye_aspect": null,
-      "distance": 2.0,
-      "height": 1.2
+      "path": "S:/HSMB_Pics"
     }
   ]
 }

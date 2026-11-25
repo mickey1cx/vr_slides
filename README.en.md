@@ -18,7 +18,7 @@ A small server on your PC plus a page in a VR headset browser. It works with any
 
 ### 1. Add your directories
 
-Open `config.json`:
+Open `config.json` (a ready template is `config.example.json`):
 
 ```json
 {
@@ -30,6 +30,7 @@ Open `config.json`:
   "statefile": "state.json",
   "qr": true,
   "qrfile": "cert/connect.png",
+  "delete_to_trash": true,
   "controls": {
     "panInvertX": true,
     "panInvertY": true,
@@ -39,33 +40,42 @@ Open `config.json`:
     "panBase": 0.35,
     "panGain": 1.0
   },
-  "delete_to_trash": true,
+  "root_defaults": {
+    "sbs": "auto",
+    "pano_mode": "sphere",
+    "pano_cyl_vfill": 1.0,
+    "pano_cyl_vcrop": 1.0,
+    "swap": false,
+    "eye_aspect": null,
+    "distance": 2.0,
+    "height": 1.2
+  },
   "roots": [
     {
       "id": "photos",
       "name": "My photos",
-      "path": "D:/Photos",
-      "sbs": "auto",
-      "pano_mode": "sphere",
-      "pano_cyl_vfill": 1.0,
-      "pano_cyl_vcrop": 0.5,
-      "swap": false,
-      "eye_aspect": null,
-      "distance": 2.0,
-      "height": 1.2
+      "path": "D:/Photos"
+    },
+    {
+      "id": "half",
+      "name": "Other settings",
+      "path": "D:/Other",
+      "sbs": "half",
+      "distance": 2.5
     }
   ]
 }
 ```
 
+- `root_defaults` — common values for all directories. A directory inherits all of them and may override any key by specifying it locally. Required directory fields are `id`, `name` and `path`.
 - `sbs`: default layout for the directory. `auto` — detect the layout of every file (recommended); `mono` — an ordinary 2D image; `sbs` / `full` — two side-by-side halves at full resolution; `half` — half-SBS, each eye compressed horizontally; `ou` — Full-OU / TAB / Top-and-Bottom, two vertical halves at full resolution; `hou` — Half-OU / HOU, each eye compressed vertically by 2; `pano` — a 360° equirectangular panorama viewed from inside a sphere. Aliases such as `2d`, `full-ou`, `half-ou`, `hsbs`, `360`, `equirect` are accepted too.
-- `pano_mode`: projection for 360 panoramas — `sphere` (default) or `cylinder` (a flat image wrapped around the viewer, assumed seamless). Can also be switched in the UI; the choice is saved in `state.json` as `panoMode[rootId]`.
-- `pano_cyl_vfill`: share of the eye's vertical FOV occupied by the wall in "cylinder" mode, 0.5–1.0 (default 1.0). 1.0 fills the view to the edges; smaller values leave margins.
-- `pano_cyl_vcrop`: share of the source height stretched onto the wall, 0.2–1.0 (default 0.5). Smaller values exclude more spherical poles; 1.0 uses the whole frame.
+- `pano_mode`: projection for 360 panoramas — `sphere` or `cylinder` (a flat image wrapped around the viewer, assumed seamless). Can also be switched in the UI; the choice is saved in `state.json` as `panoMode[rootId]`.
+- `pano_cyl_vfill`: share of the eye's vertical FOV occupied by the wall in "cylinder" mode, 0.5–1.0 (1.0 in the bundled config). 1.0 fills the view to the edges; smaller values leave margins.
+- `pano_cyl_vcrop`: share of the source height stretched onto the wall, 0.2–1.0 (1.0 in the bundled config). Smaller values exclude more spherical poles; 1.0 uses the whole frame.
 - `swap`: `true` when the eyes or halves are stored in reverse order (`RL` instead of `LR`, `BT` instead of `TB`). It can be overridden per image in the UI.
 - `eye_aspect`: explicit aspect ratio of one eye; when `null`, it is derived from the image size.
 - `distance` / `height`: distance to the plane and its height in meters (1.5–2.5 m is comfortable).
-- You can add as many `roots` as you need, each with its own path and mode.
+- You can add as many `roots` as you need, each with its own path; any setting from `root_defaults` can be overridden per root.
 - `language` — default UI language (`ru`, `en`, or any other file in `web/i18n/`).
 - `statefile` — where to keep saved settings (per-directory zoom, curvature, pan and stereo shift, image layouts for directories and individual images, chosen language and last selected source).
 - `qr` — `true` (default): create a PNG with the connection URL at startup. `qrfile` — where to save it. The QR is also available at `https://<PC-IP>:8443/qr`. Generation needs the optional `segno` package (`pip install -r requirements.txt`); without it the server only prints the URL. Use `--no-qr` to disable it.
@@ -310,6 +320,7 @@ The server runs on plain Python 3.10+: no external packages required.
 
 ```
 config.json        — directories and display settings
+config.example.json — template with shared defaults and per-root overrides
 adb.json           — local ADB settings (do not commit)
 adb.example.json   — example ADB settings
 server.py          — HTTP(S) server and JSON API
